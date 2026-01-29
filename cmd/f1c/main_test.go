@@ -176,6 +176,7 @@ func TestPrintUsage(t *testing.T) {
 		"run <file>",
 		"build <file>",
 		"emit <file>",
+		"emit-ir <file>",
 		"lex <file>",
 		"parse <file>",
 		"check <file>",
@@ -302,5 +303,68 @@ driver result = add(1, 2);
 
 	if exitCode != 0 {
 		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+}
+
+func TestRun_EmitIRMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit-ir"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_EmitIRValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	err := os.WriteFile(tmpFile, []byte("driver x = 42;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit-ir", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "@main") {
+		t.Errorf("output should contain '@main', got %q", output)
+	}
+	if !strings.Contains(output, "alloca int") {
+		t.Errorf("output should contain 'alloca int', got %q", output)
+	}
+}
+
+func TestRun_EmitIRFunction(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	code := `
+pitstop add(driver a, driver b) {
+    finish a + b;
+}
+`
+	err := os.WriteFile(tmpFile, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit-ir", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "define int @add") {
+		t.Errorf("output should contain 'define int @add', got %q", output)
 	}
 }
