@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"f1c/codegen"
 	"f1c/irgen"
 	"f1c/lexer"
 	"f1c/optimizer"
@@ -57,6 +58,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return emitIR(args[2], true, stdout, stderr)
+	case "emit":
+		if len(args) < 3 {
+			fmt.Fprintln(stderr, "error: missing file argument")
+			return 1
+		}
+		return emitLLVM(args[2], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q (not yet implemented)\n", cmd)
 		return 1
@@ -188,5 +195,48 @@ func emitIR(path string, optimize bool, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprint(stdout, mod.String())
+	return 0
+}
+
+func emitLLVM(path string, stdout, stderr io.Writer) int {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	l := lexer.New(string(content))
+	p := parser.New(l)
+	program := p.ParseProgram()
+
+	if errors := p.Errors(); len(errors) > 0 {
+		for _, e := range errors {
+			fmt.Fprintf(stderr, "parse error: %s\n", e)
+		}
+		return 1
+	}
+
+	c := typechecker.New()
+	c.Check(program)
+
+	if errors := c.Errors(); len(errors) > 0 {
+		for _, e := range errors {
+			fmt.Fprintf(stderr, "type error: %s\n", e)
+		}
+		return 1
+	}
+
+	gen := irgen.New()
+	mod := gen.Generate(program)
+
+	// Always optimize before LLVM codegen
+	opt := optimizer.New()
+	opt.Run(mod)
+
+	// Generate LLVM IR
+	llvmGen := codegen.New()
+	llvmIR := llvmGen.Generate(mod)
+
+	fmt.Fprint(stdout, llvmIR)
 	return 0
 }

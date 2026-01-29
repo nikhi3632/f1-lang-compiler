@@ -405,3 +405,89 @@ func TestRun_OptIRConstantFolding(t *testing.T) {
 		t.Errorf("output should contain 'copy int 8' after folding, got %q", output)
 	}
 }
+
+func TestRun_EmitMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_EmitValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	err := os.WriteFile(tmpFile, []byte("driver x = 42;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	output := stdout.String()
+	// Check for LLVM IR markers
+	if !strings.Contains(output, "define") {
+		t.Errorf("output should contain 'define', got %q", output)
+	}
+	if !strings.Contains(output, "@main") {
+		t.Errorf("output should contain '@main', got %q", output)
+	}
+	if !strings.Contains(output, "i64") {
+		t.Errorf("output should contain 'i64', got %q", output)
+	}
+}
+
+func TestRun_EmitFunction(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	code := `
+pitstop add(driver a, driver b) {
+    finish a + b;
+}
+`
+	err := os.WriteFile(tmpFile, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "define i64 @add") {
+		t.Errorf("output should contain 'define i64 @add', got %q", output)
+	}
+	if !strings.Contains(output, "i64 %a") {
+		t.Errorf("output should contain 'i64 %%a', got %q", output)
+	}
+	if !strings.Contains(output, "i64 %b") {
+		t.Errorf("output should contain 'i64 %%b', got %q", output)
+	}
+}
+
+func TestRun_EmitNonExistentFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "emit", "/nonexistent/file.f1"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "error:") {
+		t.Errorf("stderr should contain 'error:', got %q", stderr.String())
+	}
+}
