@@ -7,6 +7,7 @@ import (
 
 	"f1c/irgen"
 	"f1c/lexer"
+	"f1c/optimizer"
 	"f1c/parser"
 	"f1c/typechecker"
 )
@@ -49,7 +50,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "error: missing file argument")
 			return 1
 		}
-		return emitIR(args[2], stdout, stderr)
+		return emitIR(args[2], false, stdout, stderr)
+	case "opt-ir":
+		if len(args) < 3 {
+			fmt.Fprintln(stderr, "error: missing file argument")
+			return 1
+		}
+		return emitIR(args[2], true, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q (not yet implemented)\n", cmd)
 		return 1
@@ -65,6 +72,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  build <file>    Compile to binary")
 	fmt.Fprintln(w, "  emit <file>     Show LLVM IR")
 	fmt.Fprintln(w, "  emit-ir <file>  Show F1-IR")
+	fmt.Fprintln(w, "  opt-ir <file>   Show optimized F1-IR")
 	fmt.Fprintln(w, "  lex <file>      Tokenize only")
 	fmt.Fprintln(w, "  parse <file>    Parse only (show AST)")
 	fmt.Fprintln(w, "  check <file>    Type check only")
@@ -143,7 +151,7 @@ func checkFile(path string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func emitIR(path string, stdout, stderr io.Writer) int {
+func emitIR(path string, optimize bool, stdout, stderr io.Writer) int {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
@@ -173,6 +181,11 @@ func emitIR(path string, stdout, stderr io.Writer) int {
 
 	gen := irgen.New()
 	mod := gen.Generate(program)
+
+	if optimize {
+		opt := optimizer.New()
+		opt.Run(mod)
+	}
 
 	fmt.Fprint(stdout, mod.String())
 	return 0

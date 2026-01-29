@@ -177,6 +177,7 @@ func TestPrintUsage(t *testing.T) {
 		"build <file>",
 		"emit <file>",
 		"emit-ir <file>",
+		"opt-ir <file>",
 		"lex <file>",
 		"parse <file>",
 		"check <file>",
@@ -366,5 +367,41 @@ pitstop add(driver a, driver b) {
 	output := stdout.String()
 	if !strings.Contains(output, "define int @add") {
 		t.Errorf("output should contain 'define int @add', got %q", output)
+	}
+}
+
+func TestRun_OptIRMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "opt-ir"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_OptIRConstantFolding(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	// This should fold 3 + 5 to 8
+	err := os.WriteFile(tmpFile, []byte("driver x = 3 + 5;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "opt-ir", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	output := stdout.String()
+	// After constant folding, should have copy of 8 instead of add
+	if !strings.Contains(output, "copy int 8") {
+		t.Errorf("output should contain 'copy int 8' after folding, got %q", output)
 	}
 }
