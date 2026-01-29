@@ -7,6 +7,7 @@ import (
 
 	"f1c/lexer"
 	"f1c/parser"
+	"f1c/typechecker"
 )
 
 func main() {
@@ -36,6 +37,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return parseFile(args[2], stdout, stderr)
+	case "check":
+		if len(args) < 3 {
+			fmt.Fprintln(stderr, "error: missing file argument")
+			return 1
+		}
+		return checkFile(args[2], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "error: unknown command %q (not yet implemented)\n", cmd)
 		return 1
@@ -93,5 +100,37 @@ func parseFile(path string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintln(stdout, program.String())
+	return 0
+}
+
+func checkFile(path string, stdout, stderr io.Writer) int {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	l := lexer.New(string(content))
+	p := parser.New(l)
+	program := p.ParseProgram()
+
+	if errors := p.Errors(); len(errors) > 0 {
+		for _, e := range errors {
+			fmt.Fprintf(stderr, "parse error: %s\n", e)
+		}
+		return 1
+	}
+
+	c := typechecker.New()
+	c.Check(program)
+
+	if errors := c.Errors(); len(errors) > 0 {
+		for _, e := range errors {
+			fmt.Fprintf(stderr, "type error: %s\n", e)
+		}
+		return 1
+	}
+
+	fmt.Fprintln(stdout, "type check passed")
 	return 0
 }

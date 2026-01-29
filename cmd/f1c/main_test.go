@@ -216,3 +216,91 @@ func TestLexFile_TokenOutput(t *testing.T) {
 		t.Errorf("output should contain line and column info")
 	}
 }
+
+func TestRun_CheckMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "check"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_CheckValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	err := os.WriteFile(tmpFile, []byte("driver x = 5;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "check", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "type check passed") {
+		t.Errorf("stdout should contain 'type check passed', got %q", stdout.String())
+	}
+}
+
+func TestRun_CheckNonExistentFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "check", "/nonexistent/file.f1"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "error:") {
+		t.Errorf("stderr should contain 'error:', got %q", stderr.String())
+	}
+}
+
+func TestRun_CheckTypeError(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	err := os.WriteFile(tmpFile, []byte(`driver x = 5 + "hello";`), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "check", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "type error") {
+		t.Errorf("stderr should contain 'type error', got %q", stderr.String())
+	}
+}
+
+func TestRun_CheckFunctionTypeInference(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.f1")
+	code := `
+pitstop add(driver a, driver b) {
+    finish a + b;
+}
+driver result = add(1, 2);
+`
+	err := os.WriteFile(tmpFile, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "check", tmpFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+}
