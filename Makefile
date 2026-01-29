@@ -5,12 +5,8 @@ build:
 	@mkdir -p build
 	go build -race -o build/f1c ./cmd/f1c
 
-# Run all tests with race detection
+# Run all tests with race detection (verbose)
 test:
-	go test -race ./...
-
-# Run tests with verbose output
-test-v:
 	go test -race ./... -v
 
 # Run tests with coverage report
@@ -64,8 +60,7 @@ help:
 	@echo ""
 	@echo "Usage:"
 	@echo "  make build       Build compiler with race detection"
-	@echo "  make test        Run all tests with race detection"
-	@echo "  make test-v      Run tests with verbose output"
+	@echo "  make test        Run all tests (race detection, verbose)"
 	@echo "  make cover       Run tests with coverage"
 	@echo "  make cover-html  Generate HTML coverage report"
 	@echo "  make clean       Remove build artifacts"
