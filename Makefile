@@ -5,9 +5,9 @@ build:
 	@mkdir -p build
 	go build -race -o build/f1c ./cmd/f1c
 
-# Run all tests with race detection (verbose)
+# Run all tests with race detection (verbose, no cache)
 test:
-	go test -race ./... -v
+	go test -race ./... -v -count=1
 
 # Run tests with coverage report
 cover:
