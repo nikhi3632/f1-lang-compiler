@@ -188,6 +188,36 @@ lap (driver frame = 0; frame < 100; frame = frame + 1) {
 ./build/f1c check <file>            # Type check only
 ```
 
+## Error Messages
+
+F1-Lang provides clear, source-context-aware error messages with precise location highlighting:
+
+```
+type error: undefined variable 'speed'
+  --> race.f1:12:15
+   |
+12 |     radio(speed);
+   |           ^^^^^
+```
+
+```
+parse error: expected SEMICOLON, got IDENT
+  --> race.f1:5:1
+   |
+5 | radio(x)
+  | ^^^^^
+```
+
+```
+type error: cannot apply operator '+' to types 'string' and 'int'
+  --> race.f1:3:20
+   |
+3 | driver result = "lap" + 42;
+  |                      ^
+```
+
+Errors show the exact file, line, column, and underline the problematic code for quick debugging.
+
 ## Building from Source
 
 **Requirements:**

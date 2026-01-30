@@ -9,6 +9,7 @@ import (
 
 	"f1c/codegen"
 	"f1c/compiler"
+	"f1c/errors"
 	"f1c/irgen"
 	"f1c/lexer"
 	"f1c/optimizer"
@@ -187,14 +188,15 @@ func parseFile(path string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	l := lexer.New(string(content))
-	p := parser.New(l)
+	source := string(content)
+	reporter := errors.NewReporter(path, source)
+
+	l := lexer.NewWithReporter(source, reporter)
+	p := parser.NewWithReporter(l, reporter)
 	program := p.ParseProgram()
 
-	if errors := p.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "parse error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
@@ -209,24 +211,23 @@ func checkFile(path string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	l := lexer.New(string(content))
-	p := parser.New(l)
+	source := string(content)
+	reporter := errors.NewReporter(path, source)
+
+	l := lexer.NewWithReporter(source, reporter)
+	p := parser.NewWithReporter(l, reporter)
 	program := p.ParseProgram()
 
-	if errors := p.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "parse error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
-	c := typechecker.New()
+	c := typechecker.NewWithReporter(reporter)
 	c.Check(program)
 
-	if errors := c.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "type error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
@@ -241,24 +242,23 @@ func emitIR(path string, optimize bool, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	l := lexer.New(string(content))
-	p := parser.New(l)
+	source := string(content)
+	reporter := errors.NewReporter(path, source)
+
+	l := lexer.NewWithReporter(source, reporter)
+	p := parser.NewWithReporter(l, reporter)
 	program := p.ParseProgram()
 
-	if errors := p.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "parse error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
-	c := typechecker.New()
+	c := typechecker.NewWithReporter(reporter)
 	c.Check(program)
 
-	if errors := c.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "type error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
@@ -285,14 +285,15 @@ func emitLLVMWithOpts(path string, opts Options, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "[verbose] Reading file: %s\n", path)
 	}
 
-	l := lexer.New(string(content))
-	p := parser.New(l)
+	source := string(content)
+	reporter := errors.NewReporter(path, source)
+
+	l := lexer.NewWithReporter(source, reporter)
+	p := parser.NewWithReporter(l, reporter)
 	program := p.ParseProgram()
 
-	if errors := p.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "parse error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
@@ -300,13 +301,11 @@ func emitLLVMWithOpts(path string, opts Options, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "[verbose] Parsing complete\n")
 	}
 
-	c := typechecker.New()
+	c := typechecker.NewWithReporter(reporter)
 	c.Check(program)
 
-	if errors := c.Errors(); len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Fprintf(stderr, "type error: %s\n", e)
-		}
+	if reporter.HasErrors() {
+		fmt.Fprint(stderr, reporter.Format())
 		return 1
 	}
 
@@ -379,24 +378,23 @@ func buildFileWithOpts(srcPath, outPath string, opts Options, stdout, stderr io.
 			return 1
 		}
 
-		l := lexer.New(string(content))
-		p := parser.New(l)
+		source := string(content)
+		reporter := errors.NewReporter(srcPath, source)
+
+		l := lexer.NewWithReporter(source, reporter)
+		p := parser.NewWithReporter(l, reporter)
 		program := p.ParseProgram()
 
-		if errors := p.Errors(); len(errors) > 0 {
-			for _, e := range errors {
-				fmt.Fprintf(stderr, "parse error: %s\n", e)
-			}
+		if reporter.HasErrors() {
+			fmt.Fprint(stderr, reporter.Format())
 			return 1
 		}
 
-		tc := typechecker.New()
+		tc := typechecker.NewWithReporter(reporter)
 		tc.Check(program)
 
-		if errors := tc.Errors(); len(errors) > 0 {
-			for _, e := range errors {
-				fmt.Fprintf(stderr, "type error: %s\n", e)
-			}
+		if reporter.HasErrors() {
+			fmt.Fprint(stderr, reporter.Format())
 			return 1
 		}
 

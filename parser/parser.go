@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"f1c/ast"
+	"f1c/errors"
 	"f1c/lexer"
 	"f1c/token"
 )
@@ -47,8 +48,9 @@ type (
 
 // Parser parses F1-Lang source code into an AST.
 type Parser struct {
-	l      *lexer.Lexer
-	errors []string
+	l        *lexer.Lexer
+	errors   []string
+	reporter *errors.Reporter
 
 	curToken  token.Token
 	peekToken token.Token
@@ -59,7 +61,16 @@ type Parser struct {
 
 // New creates a new Parser for the given lexer.
 func New(l *lexer.Lexer) *Parser {
-	p := &Parser{l: l, errors: []string{}}
+	return newParser(l, nil)
+}
+
+// NewWithReporter creates a new Parser with an error reporter.
+func NewWithReporter(l *lexer.Lexer, reporter *errors.Reporter) *Parser {
+	return newParser(l, reporter)
+}
+
+func newParser(l *lexer.Lexer, reporter *errors.Reporter) *Parser {
+	p := &Parser{l: l, errors: []string{}, reporter: reporter}
 
 	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
 	p.registerPrefix(token.IDENT, p.parseIdentifier)
@@ -111,6 +122,9 @@ func (p *Parser) Errors() []string {
 func (p *Parser) addError(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	p.errors = append(p.errors, fmt.Sprintf("line %d, col %d: %s", p.curToken.Line, p.curToken.Column, msg))
+	if p.reporter != nil {
+		p.reporter.Add(errors.ParseError, p.curToken.Line, p.curToken.Column, len(p.curToken.Literal), format, args...)
+	}
 }
 
 func (p *Parser) nextToken() {
@@ -136,7 +150,11 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 }
 
 func (p *Parser) peekError(t token.TokenType) {
-	p.addError("expected %s, got %s", t, p.peekToken.Type)
+	msg := fmt.Sprintf("expected %s, got %s", t, p.peekToken.Type)
+	p.errors = append(p.errors, fmt.Sprintf("line %d, col %d: %s", p.peekToken.Line, p.peekToken.Column, msg))
+	if p.reporter != nil {
+		p.reporter.Add(errors.ParseError, p.peekToken.Line, p.peekToken.Column, len(p.peekToken.Literal), "expected %s, got %s", t, p.peekToken.Type)
+	}
 }
 
 func (p *Parser) peekPrecedence() int {

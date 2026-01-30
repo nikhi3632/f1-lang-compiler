@@ -3,22 +3,31 @@ package lexer
 import (
 	"strconv"
 
+	"f1c/errors"
 	"f1c/token"
 )
 
 // Lexer tokenizes F1-Lang source code.
 type Lexer struct {
-	input   string
-	pos     int  // current position in input (points to current char)
-	readPos int  // reading position (after current char)
-	ch      byte // current char under examination
-	line    int
-	column  int
+	input    string
+	pos      int  // current position in input (points to current char)
+	readPos  int  // reading position (after current char)
+	ch       byte // current char under examination
+	line     int
+	column   int
+	reporter *errors.Reporter
 }
 
 // New creates a new Lexer for the given input.
 func New(input string) *Lexer {
 	l := &Lexer{input: input, line: 1, column: 0}
+	l.readChar()
+	return l
+}
+
+// NewWithReporter creates a new Lexer with an error reporter.
+func NewWithReporter(input string, reporter *errors.Reporter) *Lexer {
+	l := &Lexer{input: input, line: 1, column: 0, reporter: reporter}
 	l.readChar()
 	return l
 }
@@ -100,6 +109,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.AND, Literal: string(ch) + string(l.ch), Line: tok.Line, Column: tok.Column}
 		} else {
+			l.reportError(l.line, l.column, 1, "unexpected character '%c', did you mean '&&'?", l.ch)
 			tok = l.newToken(token.ILLEGAL, l.ch)
 		}
 
@@ -109,6 +119,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.OR, Literal: string(ch) + string(l.ch), Line: tok.Line, Column: tok.Column}
 		} else {
+			l.reportError(l.line, l.column, 1, "unexpected character '%c', did you mean '||'?", l.ch)
 			tok = l.newToken(token.ILLEGAL, l.ch)
 		}
 
@@ -144,11 +155,13 @@ func (l *Lexer) NextToken() token.Token {
 				tok.Type = token.INT
 				tok.Literal = literal
 			} else {
+				l.reportError(tok.Line, tok.Column, len(literal), "integer literal overflow: value exceeds 64-bit signed integer range")
 				tok.Type = token.ILLEGAL
 				tok.Literal = literal
 			}
 			return tok
 		} else {
+			l.reportError(l.line, l.column, 1, "unexpected character '%c'", l.ch)
 			tok = l.newToken(token.ILLEGAL, l.ch)
 		}
 	}
@@ -163,6 +176,13 @@ func (l *Lexer) newToken(tokenType token.TokenType, ch byte) token.Token {
 		Literal: string(ch),
 		Line:    l.line,
 		Column:  l.column,
+	}
+}
+
+// reportError reports an error to the reporter if one is configured.
+func (l *Lexer) reportError(line, col, length int, format string, args ...any) {
+	if l.reporter != nil {
+		l.reporter.Add(errors.LexerError, line, col, length, format, args...)
 	}
 }
 
@@ -240,6 +260,8 @@ func (l *Lexer) readNumber() (string, bool) {
 
 func (l *Lexer) readString() (string, bool) {
 	var result []byte
+	startLine := l.line
+	startCol := l.column
 
 	l.readChar() // skip opening quote
 
@@ -251,10 +273,13 @@ func (l *Lexer) readString() (string, bool) {
 
 		if l.ch == 0 || l.ch == '\n' {
 			// Unterminated string
+			l.reportError(startLine, startCol, 1, "unterminated string literal")
 			return string(result), false
 		}
 
 		if l.ch == '\\' {
+			escLine := l.line
+			escCol := l.column
 			l.readChar() // read escape character
 			switch l.ch {
 			case 'n':
@@ -267,6 +292,7 @@ func (l *Lexer) readString() (string, bool) {
 				result = append(result, '"')
 			default:
 				// Invalid escape sequence
+				l.reportError(escLine, escCol, 2, "invalid escape sequence '\\%c'", l.ch)
 				return string(result), false
 			}
 		} else {

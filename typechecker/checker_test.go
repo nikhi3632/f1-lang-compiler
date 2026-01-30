@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"f1c/errors"
 	"f1c/lexer"
 	"f1c/parser"
 	"f1c/types"
@@ -541,14 +542,82 @@ func TestChecker_ReservedIdentifier_Function(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, errors := checkProgram(t, tt.input)
+			_, errs := checkProgram(t, tt.input)
 
-			if len(errors) == 0 {
+			if len(errs) == 0 {
 				t.Fatalf("expected error for reserved identifier '%s'", tt.reserved)
 			}
-			if !strings.Contains(errors[0], "reserved identifier") {
-				t.Errorf("error should mention reserved identifier, got: %s", errors[0])
+			if !strings.Contains(errs[0], "reserved identifier") {
+				t.Errorf("error should mention reserved identifier, got: %s", errs[0])
 			}
 		})
 	}
+}
+
+func TestChecker_ReportsErrorsToReporter(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedMessage string
+	}{
+		{
+			name:            "undefined variable",
+			input:           "radio(foo);",
+			expectedMessage: "undefined variable",
+		},
+		{
+			name:            "type mismatch",
+			input:           "driver x = 5; x = greenlight;",
+			expectedMessage: "cannot assign",
+		},
+		{
+			name:            "wrong argument type",
+			input:           "radio(pitstop(driver n) { finish n; });",
+			expectedMessage: "radio expects int, string, or bool argument",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reporter := errors.NewReporter("test.f1", tt.input)
+			l := lexer.NewWithReporter(tt.input, reporter)
+			p := parser.NewWithReporter(l, reporter)
+			program := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			checker := NewWithReporter(reporter)
+			checker.Check(program)
+
+			if !reporter.HasErrors() {
+				t.Error("expected reporter to have errors")
+				return
+			}
+
+			errs := reporter.Errors()
+			found := false
+			for _, err := range errs {
+				if containsSubstr(err.Message, tt.expectedMessage) {
+					found = true
+					if err.Kind != errors.TypeError {
+						t.Errorf("expected TypeError, got %v", err.Kind)
+					}
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.expectedMessage, errs)
+			}
+		})
+	}
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

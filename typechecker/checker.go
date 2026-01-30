@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"f1c/ast"
+	"f1c/errors"
+	"f1c/token"
 	"f1c/types"
 )
 
@@ -12,10 +14,20 @@ type Checker struct {
 	errors     []string
 	env        *Environment
 	paramNames map[string]bool // Track current function's parameter names
+	reporter   *errors.Reporter
 }
 
 // New creates a new type checker.
 func New() *Checker {
+	return newChecker(nil)
+}
+
+// NewWithReporter creates a new type checker with an error reporter.
+func NewWithReporter(reporter *errors.Reporter) *Checker {
+	return newChecker(reporter)
+}
+
+func newChecker(reporter *errors.Reporter) *Checker {
 	env := NewEnvironment()
 
 	// Built-in functions are handled specially in checkCallExpr
@@ -25,6 +37,7 @@ func New() *Checker {
 		errors:     []string{},
 		env:        env,
 		paramNames: make(map[string]bool),
+		reporter:   reporter,
 	}
 }
 
@@ -48,6 +61,15 @@ func (c *Checker) TypeOf(name string) types.Type {
 
 func (c *Checker) addError(format string, args ...interface{}) {
 	c.errors = append(c.errors, fmt.Sprintf(format, args...))
+}
+
+// addErrorAt reports an error with position information from a token.
+func (c *Checker) addErrorAt(tok token.Token, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	c.errors = append(c.errors, fmt.Sprintf("line %d, col %d: %s", tok.Line, tok.Column, msg))
+	if c.reporter != nil {
+		c.reporter.Add(errors.TypeError, tok.Line, tok.Column, len(tok.Literal), format, args...)
+	}
 }
 
 // Reserved identifiers that cannot be used as variable or function names
@@ -108,13 +130,13 @@ func (c *Checker) checkStatement(stmt ast.Statement) {
 func (c *Checker) checkVarDecl(decl *ast.VarDecl) {
 	// Check for reserved identifier
 	if c.isReservedIdentifier(decl.Name.Value) {
-		c.addError("'%s' is a reserved identifier", decl.Name.Value)
+		c.addErrorAt(decl.Name.Token, "'%s' is a reserved identifier", decl.Name.Value)
 		return
 	}
 
 	// Check for redeclaration in same scope
 	if c.env.ExistsInCurrentScope(decl.Name.Value) {
-		c.addError("'%s' already declared in this scope", decl.Name.Value)
+		c.addErrorAt(decl.Name.Token, "'%s' already declared in this scope", decl.Name.Value)
 		return
 	}
 
@@ -131,7 +153,7 @@ func (c *Checker) checkAssignment(assign *ast.Assignment) {
 	// Check that variable exists
 	varType, ok := c.env.Get(assign.Name.Value)
 	if !ok {
-		c.addError("undefined variable '%s'", assign.Name.Value)
+		c.addErrorAt(assign.Name.Token, "undefined variable '%s'", assign.Name.Value)
 		return
 	}
 
@@ -142,20 +164,20 @@ func (c *Checker) checkAssignment(assign *ast.Assignment) {
 	}
 
 	if !types.Equal(varType, valueType) {
-		c.addError("cannot assign %s to variable of type %s", valueType, varType)
+		c.addErrorAt(assign.Token, "cannot assign %s to variable of type %s", valueType, varType)
 	}
 }
 
 func (c *Checker) checkFunctionDecl(fn *ast.FunctionDecl) {
 	// Check for reserved identifier
 	if c.isReservedIdentifier(fn.Name.Value) {
-		c.addError("'%s' is a reserved identifier", fn.Name.Value)
+		c.addErrorAt(fn.Name.Token, "'%s' is a reserved identifier", fn.Name.Value)
 		return
 	}
 
 	// Check for redeclaration
 	if c.env.ExistsInCurrentScope(fn.Name.Value) {
-		c.addError("'%s' already declared in this scope", fn.Name.Value)
+		c.addErrorAt(fn.Name.Token, "'%s' already declared in this scope", fn.Name.Value)
 		return
 	}
 
@@ -216,7 +238,7 @@ func (c *Checker) checkFunctionBody(body *ast.BlockStmt) types.Type {
 	firstType := returnTypes[0]
 	for i := 1; i < len(returnTypes); i++ {
 		if !types.Equal(returnTypes[i], firstType) {
-			c.addError("inconsistent return types: %s and %s", firstType, returnTypes[i])
+			c.addErrorAt(body.Token, "inconsistent return types: %s and %s", firstType, returnTypes[i])
 		}
 	}
 
@@ -273,7 +295,7 @@ func (c *Checker) checkIfStmt(ifStmt *ast.IfStmt) {
 	// Check condition is boolean
 	condType := c.checkExpression(ifStmt.Condition)
 	if condType != nil && !types.Equal(condType, types.Bool) {
-		c.addError("condition must be bool, got %s", condType)
+		c.addErrorAt(ifStmt.Token, "condition must be bool, got %s", condType)
 	}
 
 	// Check consequence branch in new scope
@@ -302,7 +324,7 @@ func (c *Checker) checkForStmt(forStmt *ast.ForStmt) {
 	if forStmt.Condition != nil {
 		condType := c.checkExpression(forStmt.Condition)
 		if condType != nil && !types.Equal(condType, types.Bool) {
-			c.addError("loop condition must be bool, got %s", condType)
+			c.addErrorAt(forStmt.Token, "loop condition must be bool, got %s", condType)
 		}
 	}
 
@@ -352,7 +374,7 @@ func (c *Checker) checkExpression(expr ast.Expression) types.Type {
 func (c *Checker) checkIdentifier(ident *ast.Identifier) types.Type {
 	typ, ok := c.env.Get(ident.Value)
 	if !ok {
-		c.addError("undefined variable '%s'", ident.Value)
+		c.addErrorAt(ident.Token, "undefined variable '%s'", ident.Value)
 		return nil
 	}
 	return typ
@@ -367,18 +389,18 @@ func (c *Checker) checkPrefixExpr(expr *ast.PrefixExpr) types.Type {
 	switch expr.Operator {
 	case "-":
 		if !types.Equal(rightType, types.Int) {
-			c.addError("operator - requires int operand, got %s", rightType)
+			c.addErrorAt(expr.Token, "operator - requires int operand, got %s", rightType)
 			return nil
 		}
 		return types.Int
 	case "!":
 		if !types.Equal(rightType, types.Bool) {
-			c.addError("operator ! requires bool operand, got %s", rightType)
+			c.addErrorAt(expr.Token, "operator ! requires bool operand, got %s", rightType)
 			return nil
 		}
 		return types.Bool
 	default:
-		c.addError("unknown prefix operator: %s", expr.Operator)
+		c.addErrorAt(expr.Token, "unknown prefix operator: %s", expr.Operator)
 		return nil
 	}
 }
@@ -395,7 +417,7 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 	case "+", "-", "*", "/", "%":
 		// Arithmetic operators require int operands
 		if !types.Equal(leftType, types.Int) || !types.Equal(rightType, types.Int) {
-			c.addError("operator %s requires int operands, got %s and %s",
+			c.addErrorAt(expr.Token, "operator %s requires int operands, got %s and %s",
 				expr.Operator, leftType, rightType)
 			return nil
 		}
@@ -404,7 +426,7 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 	case "<", ">", "<=", ">=":
 		// Comparison operators require int operands, return bool
 		if !types.Equal(leftType, types.Int) || !types.Equal(rightType, types.Int) {
-			c.addError("operator %s requires int operands, got %s and %s",
+			c.addErrorAt(expr.Token, "operator %s requires int operands, got %s and %s",
 				expr.Operator, leftType, rightType)
 			return nil
 		}
@@ -413,13 +435,13 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 	case "==", "!=":
 		// Equality operators require same type operands
 		if !types.Equal(leftType, rightType) {
-			c.addError("operator %s requires same type operands, got %s and %s",
+			c.addErrorAt(expr.Token, "operator %s requires same type operands, got %s and %s",
 				expr.Operator, leftType, rightType)
 			return nil
 		}
 		// Check if comparing functions (not allowed)
 		if _, ok := leftType.(*types.FunctionType); ok {
-			c.addError("cannot compare function types")
+			c.addErrorAt(expr.Token, "cannot compare function types")
 			return nil
 		}
 		return types.Bool
@@ -427,14 +449,14 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 	case "&&", "||":
 		// Logical operators require bool operands
 		if !types.Equal(leftType, types.Bool) || !types.Equal(rightType, types.Bool) {
-			c.addError("operator %s requires bool operands, got %s and %s",
+			c.addErrorAt(expr.Token, "operator %s requires bool operands, got %s and %s",
 				expr.Operator, leftType, rightType)
 			return nil
 		}
 		return types.Bool
 
 	default:
-		c.addError("unknown operator: %s", expr.Operator)
+		c.addErrorAt(expr.Token, "unknown operator: %s", expr.Operator)
 		return nil
 	}
 }
@@ -442,7 +464,7 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 	// Check if it's a built-in function call
 	if ident, ok := call.Function.(*ast.Identifier); ok {
-		if retType := c.checkBuiltinCall(ident.Value, call.Arguments); retType != nil {
+		if retType := c.checkBuiltinCall(ident.Token, ident.Value, call.Arguments); retType != nil {
 			return retType
 		}
 	}
@@ -468,13 +490,13 @@ func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 				}
 			}
 		}
-		c.addError("cannot call non-function type %s", fnType)
+		c.addErrorAt(call.Token, "cannot call non-function type %s", fnType)
 		return nil
 	}
 
 	// Check argument count
 	if len(call.Arguments) != len(fn.Params) {
-		c.addError("wrong number of arguments: got %d, want %d",
+		c.addErrorAt(call.Token, "wrong number of arguments: got %d, want %d",
 			len(call.Arguments), len(fn.Params))
 		return nil
 	}
@@ -492,7 +514,7 @@ func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 				// Allow passing function where int is expected (function pointer)
 				continue
 			}
-			c.addError("argument %d: expected %s, got %s",
+			c.addErrorAt(call.Token, "argument %d: expected %s, got %s",
 				i+1, fn.Params[i], argType)
 		}
 	}
@@ -502,12 +524,12 @@ func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 
 // checkBuiltinCall handles built-in functions specially
 // Returns the return type if it's a built-in, nil otherwise
-func (c *Checker) checkBuiltinCall(name string, args []ast.Expression) types.Type {
+func (c *Checker) checkBuiltinCall(tok token.Token, name string, args []ast.Expression) types.Type {
 	switch name {
 	case "radio":
 		// radio(int|string|bool) -> void
 		if len(args) != 1 {
-			c.addError("radio expects 1 argument, got %d", len(args))
+			c.addErrorAt(tok, "radio expects 1 argument, got %d", len(args))
 			return types.Void
 		}
 		argType := c.checkExpression(args[0])
@@ -515,32 +537,32 @@ func (c *Checker) checkBuiltinCall(name string, args []ast.Expression) types.Typ
 			return types.Void
 		}
 		if !types.Equal(argType, types.Int) && !types.Equal(argType, types.String) && !types.Equal(argType, types.Bool) {
-			c.addError("radio expects int, string, or bool argument, got %s", argType)
+			c.addErrorAt(tok, "radio expects int, string, or bool argument, got %s", argType)
 		}
 		return types.Void
 
 	case "bono":
 		// bono(string) -> void
 		if len(args) != 1 {
-			c.addError("bono expects 1 argument, got %d", len(args))
+			c.addErrorAt(tok, "bono expects 1 argument, got %d", len(args))
 			return types.Void
 		}
 		argType := c.checkExpression(args[0])
 		if argType != nil && !types.Equal(argType, types.String) {
-			c.addError("bono expects string argument, got %s", argType)
+			c.addErrorAt(tok, "bono expects string argument, got %s", argType)
 		}
 		return types.Void
 
 	case "canvas":
 		// canvas(int, int) -> void
 		if len(args) != 2 {
-			c.addError("canvas expects 2 arguments, got %d", len(args))
+			c.addErrorAt(tok, "canvas expects 2 arguments, got %d", len(args))
 			return types.Void
 		}
 		for i, arg := range args {
 			argType := c.checkExpression(arg)
 			if argType != nil && !types.Equal(argType, types.Int) {
-				c.addError("canvas argument %d: expected int, got %s", i+1, argType)
+				c.addErrorAt(tok, "canvas argument %d: expected int, got %s", i+1, argType)
 			}
 		}
 		return types.Void
@@ -548,13 +570,13 @@ func (c *Checker) checkBuiltinCall(name string, args []ast.Expression) types.Typ
 	case "pixel":
 		// pixel(int, int, int, int, int) -> void
 		if len(args) != 5 {
-			c.addError("pixel expects 5 arguments (x, y, r, g, b), got %d", len(args))
+			c.addErrorAt(tok, "pixel expects 5 arguments (x, y, r, g, b), got %d", len(args))
 			return types.Void
 		}
 		for i, arg := range args {
 			argType := c.checkExpression(arg)
 			if argType != nil && !types.Equal(argType, types.Int) {
-				c.addError("pixel argument %d: expected int, got %s", i+1, argType)
+				c.addErrorAt(tok, "pixel argument %d: expected int, got %s", i+1, argType)
 			}
 		}
 		return types.Void
@@ -562,36 +584,36 @@ func (c *Checker) checkBuiltinCall(name string, args []ast.Expression) types.Typ
 	case "render":
 		// render(string) -> void
 		if len(args) != 1 {
-			c.addError("render expects 1 argument, got %d", len(args))
+			c.addErrorAt(tok, "render expects 1 argument, got %d", len(args))
 			return types.Void
 		}
 		argType := c.checkExpression(args[0])
 		if argType != nil && !types.Equal(argType, types.String) {
-			c.addError("render expects string argument, got %s", argType)
+			c.addErrorAt(tok, "render expects string argument, got %s", argType)
 		}
 		return types.Void
 
 	case "snapshot":
 		// snapshot(int) -> void
 		if len(args) != 1 {
-			c.addError("snapshot expects 1 argument, got %d", len(args))
+			c.addErrorAt(tok, "snapshot expects 1 argument, got %d", len(args))
 			return types.Void
 		}
 		argType := c.checkExpression(args[0])
 		if argType != nil && !types.Equal(argType, types.Int) {
-			c.addError("snapshot expects int argument, got %s", argType)
+			c.addErrorAt(tok, "snapshot expects int argument, got %s", argType)
 		}
 		return types.Void
 
 	case "framedir":
 		// framedir(string) -> void
 		if len(args) != 1 {
-			c.addError("framedir expects 1 argument, got %d", len(args))
+			c.addErrorAt(tok, "framedir expects 1 argument, got %d", len(args))
 			return types.Void
 		}
 		argType := c.checkExpression(args[0])
 		if argType != nil && !types.Equal(argType, types.String) {
-			c.addError("framedir expects string argument, got %s", argType)
+			c.addErrorAt(tok, "framedir expects string argument, got %s", argType)
 		}
 		return types.Void
 

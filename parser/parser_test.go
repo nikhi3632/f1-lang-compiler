@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"f1c/ast"
+	"f1c/errors"
 	"f1c/lexer"
 )
 
@@ -831,4 +832,61 @@ func TestParserErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParser_ReportsErrorsToReporter(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedMessage string
+	}{
+		{
+			name:            "missing semicolon",
+			input:           "driver x = 5",
+			expectedMessage: "expected SEMICOLON",
+		},
+		{
+			name:            "missing closing paren",
+			input:           "add(1, 2",
+			expectedMessage: "expected RPAREN",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reporter := errors.NewReporter("test.f1", tt.input)
+			l := lexer.NewWithReporter(tt.input, reporter)
+			p := NewWithReporter(l, reporter)
+			p.ParseProgram()
+
+			if !reporter.HasErrors() {
+				t.Error("expected reporter to have errors")
+				return
+			}
+
+			errs := reporter.Errors()
+			found := false
+			for _, err := range errs {
+				if containsSubstr(err.Message, tt.expectedMessage) {
+					found = true
+					if err.Kind != errors.ParseError {
+						t.Errorf("expected ParseError, got %v", err.Kind)
+					}
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.expectedMessage, errs)
+			}
+		})
+	}
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

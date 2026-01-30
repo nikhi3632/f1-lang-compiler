@@ -3,6 +3,7 @@ package lexer
 import (
 	"testing"
 
+	"f1c/errors"
 	"f1c/token"
 )
 
@@ -519,4 +520,110 @@ func TestNextToken_EdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLexer_ReportsErrorsToReporter(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedMessage string
+	}{
+		{
+			name:            "invalid escape sequence",
+			input:           `"hello\q"`,
+			expectedMessage: "invalid escape sequence",
+		},
+		{
+			name:            "unterminated string",
+			input:           `"hello`,
+			expectedMessage: "unterminated string",
+		},
+		{
+			name:            "integer overflow",
+			input:           `99999999999999999999999`,
+			expectedMessage: "integer literal overflow",
+		},
+		{
+			name:            "unexpected character",
+			input:           `driver x$y`,
+			expectedMessage: "unexpected character",
+		},
+		{
+			name:            "single ampersand",
+			input:           `&`,
+			expectedMessage: "did you mean '&&'",
+		},
+		{
+			name:            "single pipe",
+			input:           `|`,
+			expectedMessage: "did you mean '||'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reporter := errors.NewReporter("test.f1", tt.input)
+			l := NewWithReporter(tt.input, reporter)
+
+			// Consume all tokens
+			for {
+				tok := l.NextToken()
+				if tok.Type == token.EOF {
+					break
+				}
+			}
+
+			if !reporter.HasErrors() {
+				t.Error("expected reporter to have errors")
+				return
+			}
+
+			errs := reporter.Errors()
+			found := false
+			for _, err := range errs {
+				if containsSubstr(err.Message, tt.expectedMessage) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.expectedMessage, errs)
+			}
+		})
+	}
+}
+
+func TestLexer_ErrorPositions(t *testing.T) {
+	input := "driver x = 5;\nradio(\"hello\\q\");"
+	reporter := errors.NewReporter("test.f1", input)
+	l := NewWithReporter(input, reporter)
+
+	// Consume all tokens
+	for {
+		tok := l.NextToken()
+		if tok.Type == token.EOF {
+			break
+		}
+	}
+
+	if !reporter.HasErrors() {
+		t.Fatal("expected reporter to have errors")
+	}
+
+	err := reporter.Errors()[0]
+	if err.Line != 2 {
+		t.Errorf("expected error on line 2, got line %d", err.Line)
+	}
+	if err.Kind != errors.LexerError {
+		t.Errorf("expected LexerError, got %v", err.Kind)
+	}
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"f1c/codegen"
+	"f1c/errors"
 	"f1c/irgen"
 	"f1c/lexer"
 	"f1c/optimizer"
@@ -48,7 +49,7 @@ func (c *Compiler) Compile(srcPath, outPath string) error {
 	}
 
 	// Generate LLVM IR
-	llvmIR, err := c.GenerateLLVM(string(content))
+	llvmIR, err := c.GenerateLLVMWithFilename(srcPath, string(content))
 	if err != nil {
 		return err
 	}
@@ -131,23 +132,30 @@ func (c *Compiler) Run(srcPath string) (string, error) {
 
 // GenerateLLVM generates LLVM IR from source code.
 func (c *Compiler) GenerateLLVM(source string) (string, error) {
+	return c.GenerateLLVMWithFilename("<input>", source)
+}
+
+// GenerateLLVMWithFilename generates LLVM IR from source code with filename for error reporting.
+func (c *Compiler) GenerateLLVMWithFilename(filename, source string) (string, error) {
+	reporter := errors.NewReporter(filename, source)
+
 	// Lex
-	l := lexer.New(source)
+	l := lexer.NewWithReporter(source, reporter)
 
 	// Parse
-	p := parser.New(l)
+	p := parser.NewWithReporter(l, reporter)
 	program := p.ParseProgram()
 
-	if errors := p.Errors(); len(errors) > 0 {
-		return "", fmt.Errorf("parse errors: %s", strings.Join(errors, "; "))
+	if reporter.HasErrors() {
+		return "", fmt.Errorf("%s", reporter.Format())
 	}
 
 	// Type check
-	tc := typechecker.New()
+	tc := typechecker.NewWithReporter(reporter)
 	tc.Check(program)
 
-	if errors := tc.Errors(); len(errors) > 0 {
-		return "", fmt.Errorf("type errors: %s", strings.Join(errors, "; "))
+	if reporter.HasErrors() {
+		return "", fmt.Errorf("%s", reporter.Format())
 	}
 
 	// Generate F1-IR
