@@ -1,0 +1,9 @@
+// Test closure capture
+driver x = 10;
+driver y = 20;
+
+driver addXY = pitstop(driver z) {
+    finish x + y + z;  // captures x and y
+};
+
+radio(addXY(5));  // Should print 35 (10 + 20 + 5)

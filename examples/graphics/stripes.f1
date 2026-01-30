@@ -1,0 +1,34 @@
+// Racing Stripes - F1 Team Colors
+// Output: examples/graphics/outputs/stripes.ppm (400x300)
+//
+// To convert to PNG (run from project root):
+//   ffmpeg -y -i examples/graphics/outputs/stripes.ppm -vf "scale=800:600:flags=neighbor" examples/graphics/outputs/stripes.png
+
+canvas(400, 300);
+
+lap (driver y = 0; y < 300; y = y + 1) {
+    lap (driver x = 0; x < 400; x = x + 1) {
+        // 5 vertical stripes, each 80 pixels wide
+        driver stripe = x / 80;
+
+        drs (stripe == 0) {
+            // Ferrari Red
+            pixel(x, y, 220, 0, 0);
+        } defend drs (stripe == 1) {
+            // McLaren Papaya Orange
+            pixel(x, y, 255, 135, 0);
+        } defend drs (stripe == 2) {
+            // Mercedes Teal
+            pixel(x, y, 0, 210, 190);
+        } defend drs (stripe == 3) {
+            // Red Bull Blue
+            pixel(x, y, 30, 65, 255);
+        } defend {
+            // Aston Martin Green
+            pixel(x, y, 0, 144, 81);
+        }
+    }
+}
+
+render("examples/graphics/outputs/stripes.ppm");
+radio("Rendered: examples/graphics/outputs/stripes.ppm");

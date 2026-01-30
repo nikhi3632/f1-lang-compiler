@@ -1,0 +1,23 @@
+// Color Gradient - Smooth RGB color transitions
+// Output: examples/graphics/outputs/gradient.ppm (400x300)
+//
+// To convert to PNG (run from project root):
+//   ffmpeg -y -i examples/graphics/outputs/gradient.ppm -vf "scale=800:600:flags=neighbor" examples/graphics/outputs/gradient.png
+
+canvas(400, 300);
+
+lap (driver y = 0; y < 300; y = y + 1) {
+    lap (driver x = 0; x < 400; x = x + 1) {
+        // R increases left to right
+        driver r = x * 255 / 400;
+        // G increases top to bottom
+        driver g = y * 255 / 300;
+        // B is inverse of R for purple-to-yellow diagonal
+        driver b = 255 - r;
+
+        pixel(x, y, r, g, b);
+    }
+}
+
+render("examples/graphics/outputs/gradient.ppm");
+radio("Rendered: examples/graphics/outputs/gradient.ppm");

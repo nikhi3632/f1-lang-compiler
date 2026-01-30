@@ -172,7 +172,7 @@ func TestPrintUsage(t *testing.T) {
 	output := buf.String()
 	expectedContents := []string{
 		"F1-Lang Compiler",
-		"Usage: f1c <command> [file]",
+		"Usage: f1c <command> [options] <file>",
 		"run <file>",
 		"build <file>",
 		"emit <file>",
@@ -181,6 +181,10 @@ func TestPrintUsage(t *testing.T) {
 		"lex <file>",
 		"parse <file>",
 		"check <file>",
+		"-O0",
+		"-O1",
+		"--verbose",
+		"--emit-llvm",
 	}
 
 	for _, expected := range expectedContents {
@@ -482,6 +486,108 @@ pitstop add(driver a, driver b) {
 func TestRun_EmitNonExistentFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"f1c", "emit", "/nonexistent/file.f1"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "error:") {
+		t.Errorf("stderr should contain 'error:', got %q", stderr.String())
+	}
+}
+
+func TestRun_RunMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "run"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_RunNonExistentFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "run", "/nonexistent/file.f1"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "error:") {
+		t.Errorf("stderr should contain 'error:', got %q", stderr.String())
+	}
+}
+
+func TestRun_BuildMissingFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "build"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "missing file argument") {
+		t.Errorf("stderr should contain 'missing file argument', got %q", stderr.String())
+	}
+}
+
+func TestRun_BuildValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcFile := filepath.Join(tmpDir, "test.f1")
+	outFile := filepath.Join(tmpDir, "test")
+
+	err := os.WriteFile(srcFile, []byte("driver x = 42;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "build", srcFile, "-o", outFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	// Check output file exists
+	if _, err := os.Stat(outFile); os.IsNotExist(err) {
+		t.Errorf("output file should exist at %s", outFile)
+	}
+
+	if !strings.Contains(stdout.String(), "compiled:") {
+		t.Errorf("stdout should contain 'compiled:', got %q", stdout.String())
+	}
+}
+
+func TestRun_BuildDefaultOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcFile := filepath.Join(tmpDir, "myprogram.f1")
+
+	err := os.WriteFile(srcFile, []byte("driver x = 42;"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "build", srcFile}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0, stderr: %s", exitCode, stderr.String())
+	}
+
+	// Default output should be myprogram (without .f1)
+	expectedOut := filepath.Join(tmpDir, "myprogram")
+	if _, err := os.Stat(expectedOut); os.IsNotExist(err) {
+		t.Errorf("output file should exist at %s", expectedOut)
+	}
+}
+
+func TestRun_BuildNonExistentFile(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"f1c", "build", "/nonexistent/file.f1"}, &stdout, &stderr)
 
 	if exitCode != 1 {
 		t.Errorf("exit code = %d, want 1", exitCode)

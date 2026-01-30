@@ -1,5 +1,0 @@
-driver x = 5;
-driver y = x + 10;
-pitstop add(driver a, driver b) {
-    finish a + b;
-}

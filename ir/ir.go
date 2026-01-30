@@ -51,6 +51,9 @@ type Function struct {
 	Params     []*Param
 	ReturnType types.Type
 	Blocks     []*BasicBlock
+	// Closure-related fields
+	IsClosure    bool     // True if this is a lifted lambda with captures
+	CaptureNames []string // Names of captured variables (for debugging)
 }
 
 func (f *Function) String() string {
@@ -162,6 +165,14 @@ type ParamRef struct {
 func (p *ParamRef) String() string { return fmt.Sprintf("%%%s", p.Name) }
 func (p *ParamRef) valueNode()     {}
 
+// FuncRef references a function (for closures/function pointers).
+type FuncRef struct {
+	Name string
+}
+
+func (f *FuncRef) String() string { return fmt.Sprintf("@%s", f.Name) }
+func (f *FuncRef) valueNode()     {}
+
 // Instruction is an IR instruction.
 type Instruction interface {
 	String() string
@@ -243,10 +254,12 @@ func (u *UnaryOp) instrNode() {}
 
 // Call calls a function.
 type Call struct {
-	Dest    *Reg // nil for void calls
-	Func    string
-	Args    []Value
-	RetType types.Type
+	Dest     *Reg // nil for void calls
+	Func     string
+	Args     []Value
+	ArgTypes []types.Type // Types of arguments (for proper codegen)
+	RetType  types.Type
+	IsTail   bool // True for tail calls (TCO)
 }
 
 func (c *Call) String() string {
@@ -255,13 +268,62 @@ func (c *Call) String() string {
 		args[i] = arg.String()
 	}
 
-	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
-		return fmt.Sprintf("call void @%s(%s)", c.Func, strings.Join(args, ", "))
+	callType := "call"
+	if c.IsTail {
+		callType = "tail call"
 	}
-	return fmt.Sprintf("%s = call %s @%s(%s)",
-		c.Dest.String(), c.RetType.String(), c.Func, strings.Join(args, ", "))
+
+	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
+		return fmt.Sprintf("%s void @%s(%s)", callType, c.Func, strings.Join(args, ", "))
+	}
+	return fmt.Sprintf("%s = %s %s @%s(%s)",
+		c.Dest.String(), callType, c.RetType.String(), c.Func, strings.Join(args, ", "))
 }
 func (c *Call) instrNode() {}
+
+// CallIndirect calls a function pointer (for closures).
+type CallIndirect struct {
+	Dest    *Reg // nil for void calls
+	FuncPtr Value
+	Args    []Value
+	RetType types.Type
+}
+
+func (c *CallIndirect) String() string {
+	args := make([]string, len(c.Args))
+	for i, arg := range c.Args {
+		args[i] = arg.String()
+	}
+
+	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
+		return fmt.Sprintf("call_indirect void %s(%s)", c.FuncPtr.String(), strings.Join(args, ", "))
+	}
+	return fmt.Sprintf("%s = call_indirect %s %s(%s)",
+		c.Dest.String(), c.RetType.String(), c.FuncPtr.String(), strings.Join(args, ", "))
+}
+func (c *CallIndirect) instrNode() {}
+
+// ClosureCall calls through a closure struct (func_ptr, env_ptr).
+type ClosureCall struct {
+	Dest       *Reg // nil for void calls
+	ClosurePtr Value
+	Args       []Value
+	RetType    types.Type
+}
+
+func (c *ClosureCall) String() string {
+	args := make([]string, len(c.Args))
+	for i, arg := range c.Args {
+		args[i] = arg.String()
+	}
+
+	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
+		return fmt.Sprintf("closure_call void %s(%s)", c.ClosurePtr.String(), strings.Join(args, ", "))
+	}
+	return fmt.Sprintf("%s = closure_call %s %s(%s)",
+		c.Dest.String(), c.RetType.String(), c.ClosurePtr.String(), strings.Join(args, ", "))
+}
+func (c *ClosureCall) instrNode() {}
 
 // Copy copies a value (for SSA).
 type Copy struct {
@@ -281,6 +343,35 @@ type Phi struct {
 	Type    types.Type
 	Entries []PhiEntry
 }
+
+// MakeClosure creates a closure from a function and captured values.
+type MakeClosure struct {
+	Dest     *Reg
+	FuncName string   // The lifted lambda function name
+	Captures []Value  // Values to capture in the environment
+}
+
+func (m *MakeClosure) String() string {
+	caps := make([]string, len(m.Captures))
+	for i, c := range m.Captures {
+		caps[i] = c.String()
+	}
+	return fmt.Sprintf("%s = make_closure @%s [%s]", m.Dest.String(), m.FuncName, strings.Join(caps, ", "))
+}
+func (m *MakeClosure) instrNode() {}
+
+// GetEnvField loads a captured value from the closure environment.
+type GetEnvField struct {
+	Dest  *Reg
+	Env   Value // The environment pointer
+	Index int   // Field index in the environment
+	Type  types.Type
+}
+
+func (g *GetEnvField) String() string {
+	return fmt.Sprintf("%s = get_env_field %s, %d", g.Dest.String(), g.Env.String(), g.Index)
+}
+func (g *GetEnvField) instrNode() {}
 
 type PhiEntry struct {
 	Val   Value

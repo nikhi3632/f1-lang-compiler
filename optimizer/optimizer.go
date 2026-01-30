@@ -16,8 +16,10 @@ type Optimizer struct {
 func New() *Optimizer {
 	return &Optimizer{
 		passes: []Pass{
-			NewConstantFolding(),
-			NewDCE(),
+			NewConstantPropagation(),    // Run first to expose more constants
+			NewConstantFolding(),        // Then fold constant expressions
+			NewDCE(),                    // Remove dead code
+			NewTailCallOptimization(),   // Mark tail calls for TCO
 		},
 	}
 }

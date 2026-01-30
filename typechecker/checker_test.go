@@ -498,3 +498,57 @@ lap (driver i = 0; i; i = i + 1) {
 		t.Fatal("expected error for non-boolean loop condition")
 	}
 }
+
+// --- Reserved Identifier Tests ---
+
+func TestChecker_ReservedIdentifier_Variable(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		reserved string
+	}{
+		{"radio", "driver radio = 1;", "radio"},
+		{"bono", "driver bono = 1;", "bono"},
+		{"canvas", "driver canvas = 1;", "canvas"},
+		{"pixel", "driver pixel = 1;", "pixel"},
+		{"render", "driver render = 1;", "render"},
+		{"snapshot", "driver snapshot = 1;", "snapshot"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, errors := checkProgram(t, tt.input)
+
+			if len(errors) == 0 {
+				t.Fatalf("expected error for reserved identifier '%s'", tt.reserved)
+			}
+			if !strings.Contains(errors[0], "reserved identifier") {
+				t.Errorf("error should mention reserved identifier, got: %s", errors[0])
+			}
+		})
+	}
+}
+
+func TestChecker_ReservedIdentifier_Function(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		reserved string
+	}{
+		{"radio", "pitstop radio() { finish 0; }", "radio"},
+		{"bono", "pitstop bono() { finish 0; }", "bono"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, errors := checkProgram(t, tt.input)
+
+			if len(errors) == 0 {
+				t.Fatalf("expected error for reserved identifier '%s'", tt.reserved)
+			}
+			if !strings.Contains(errors[0], "reserved identifier") {
+				t.Errorf("error should mention reserved identifier, got: %s", errors[0])
+			}
+		})
+	}
+}

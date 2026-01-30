@@ -1,0 +1,59 @@
+// Expanding Rings Animation - Hypnotic concentric circles
+// Output: examples/graphics/outputs/frame_0000.ppm through frame_0059.ppm (200x200)
+//
+// To convert to GIF (run from project root):
+//   cd examples/graphics/outputs && ffmpeg -y -framerate 20 -i frame_%04d.ppm -vf "scale=400:400:flags=neighbor" rings.gif && rm frame_*.ppm
+
+framedir("examples/graphics/outputs");
+canvas(200, 200);
+
+driver cx = 100;
+driver cy = 100;
+
+// Pre-declare working variables
+driver dx = 0;
+driver dy = 0;
+driver dist2 = 0;
+driver ring = 0;
+driver pattern = 0;
+driver intensity = 0;
+
+// Generate 60 frames (loops seamlessly)
+lap (driver frame = 0; frame < 60; frame = frame + 1) {
+    lap (driver py = 0; py < 200; py = py + 1) {
+        lap (driver px = 0; px < 200; px = px + 1) {
+            // Distance from center (squared, then approximate sqrt via rings)
+            dx = px - cx;
+            dy = py - cy;
+            dist2 = dx * dx + dy * dy;
+
+            // Create rings - divide distance into bands
+            // Using squared distance, rings at 0, 400, 1600, 3600... (20^2, 40^2, 60^2...)
+            // Simplified: use dist2 / 400 as ring index
+            ring = dist2 / 400;
+
+            // Animate by offsetting ring pattern with frame
+            pattern = (ring + frame) % 12;
+
+            // Create 3 color bands that cycle
+            drs (pattern < 4) {
+                // Orange band
+                intensity = 200 + (pattern * 10);
+                pixel(px, py, intensity, 100, 0);
+            } defend drs (pattern < 8) {
+                // Blue band
+                intensity = 150 + ((pattern - 4) * 20);
+                pixel(px, py, 0, 50, intensity);
+            } defend {
+                // Purple band
+                intensity = 100 + ((pattern - 8) * 30);
+                pixel(px, py, intensity, 0, intensity);
+            }
+        }
+    }
+
+    snapshot(frame);
+}
+
+radio("Animation complete! 60 frames generated.");
+radio("To convert: cd examples/graphics/outputs && ffmpeg -y -framerate 20 -i frame_%04d.ppm -vf scale=400:400:flags=neighbor rings.gif");

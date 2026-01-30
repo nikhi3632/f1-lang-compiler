@@ -1,0 +1,25 @@
+// Checkered Flag - Classic F1 finish line pattern
+// Output: examples/graphics/outputs/checkered.ppm (400x300)
+//
+// To convert to PNG (run from project root):
+//   ffmpeg -y -i examples/graphics/outputs/checkered.ppm -vf "scale=800:600:flags=neighbor" examples/graphics/outputs/checkered.png
+
+canvas(400, 300);
+
+lap (driver y = 0; y < 300; y = y + 1) {
+    lap (driver x = 0; x < 400; x = x + 1) {
+        // Divide into 50x50 pixel squares
+        driver sx = x / 50;
+        driver sy = y / 50;
+
+        // Alternate black and white based on square position
+        drs ((sx + sy) % 2 == 0) {
+            pixel(x, y, 255, 255, 255);
+        } defend {
+            pixel(x, y, 0, 0, 0);
+        }
+    }
+}
+
+render("examples/graphics/outputs/checkered.ppm");
+radio("Rendered: examples/graphics/outputs/checkered.ppm");

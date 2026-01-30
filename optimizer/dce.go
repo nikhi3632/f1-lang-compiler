@@ -78,9 +78,17 @@ func (d *DCE) getInstrDest(instr ir.Instruction) *ir.Reg {
 		return i.Dest
 	case *ir.Call:
 		return i.Dest
+	case *ir.CallIndirect:
+		return i.Dest
+	case *ir.ClosureCall:
+		return i.Dest
 	case *ir.Copy:
 		return i.Dest
 	case *ir.Phi:
+		return i.Dest
+	case *ir.MakeClosure:
+		return i.Dest
+	case *ir.GetEnvField:
 		return i.Dest
 	default:
 		return nil
@@ -114,12 +122,32 @@ func (d *DCE) markUsedInInstr(instr ir.Instruction, used map[int]bool) bool {
 		for _, arg := range i.Args {
 			changed = d.markUsedValue(arg, used) || changed
 		}
+	case *ir.CallIndirect:
+		// Mark the function pointer and all arguments as used
+		changed = d.markUsedValue(i.FuncPtr, used) || changed
+		for _, arg := range i.Args {
+			changed = d.markUsedValue(arg, used) || changed
+		}
+	case *ir.ClosureCall:
+		// Mark the closure pointer and all arguments as used
+		changed = d.markUsedValue(i.ClosurePtr, used) || changed
+		for _, arg := range i.Args {
+			changed = d.markUsedValue(arg, used) || changed
+		}
 	case *ir.Copy:
 		changed = d.markUsedValue(i.Val, used) || changed
 	case *ir.Phi:
 		for _, entry := range i.Entries {
 			changed = d.markUsedValue(entry.Val, used) || changed
 		}
+	case *ir.MakeClosure:
+		// Mark captured values as used
+		for _, cap := range i.Captures {
+			changed = d.markUsedValue(cap, used) || changed
+		}
+	case *ir.GetEnvField:
+		// Mark environment pointer as used
+		changed = d.markUsedValue(i.Env, used) || changed
 	}
 
 	return changed
@@ -141,6 +169,12 @@ func (d *DCE) hasSideEffects(instr ir.Instruction) bool {
 		return true
 	case *ir.Call:
 		// All calls have potential side effects
+		return true
+	case *ir.CallIndirect:
+		// Indirect calls also have potential side effects
+		return true
+	case *ir.ClosureCall:
+		// Closure calls also have potential side effects
 		return true
 	case *ir.Alloca:
 		// Allocas are needed for stores

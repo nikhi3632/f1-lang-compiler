@@ -9,16 +9,28 @@ import (
 
 // Checker performs type checking on an F1-Lang AST.
 type Checker struct {
-	errors []string
-	env    *Environment
+	errors     []string
+	env        *Environment
+	paramNames map[string]bool // Track current function's parameter names
 }
 
 // New creates a new type checker.
 func New() *Checker {
+	env := NewEnvironment()
+
+	// Built-in functions are handled specially in checkCallExpr
+	// We don't add them to the environment to avoid treating them as regular functions
+	// See checkBuiltinCall for the special handling
 	return &Checker{
-		errors: []string{},
-		env:    NewEnvironment(),
+		errors:     []string{},
+		env:        env,
+		paramNames: make(map[string]bool),
 	}
+}
+
+// isParameter checks if a name is a parameter in the current function scope.
+func (c *Checker) isParameter(name string) bool {
+	return c.paramNames[name]
 }
 
 // Errors returns the list of type errors found during checking.
@@ -36,6 +48,33 @@ func (c *Checker) TypeOf(name string) types.Type {
 
 func (c *Checker) addError(format string, args ...interface{}) {
 	c.errors = append(c.errors, fmt.Sprintf(format, args...))
+}
+
+// Reserved identifiers that cannot be used as variable or function names
+var reservedIdentifiers = map[string]bool{
+	// Entry point
+	"main": true,
+	// Keywords
+	"driver":     true,
+	"pitstop":    true,
+	"drs":        true,
+	"defend":     true,
+	"lap":        true,
+	"finish":     true,
+	"greenlight": true,
+	"redlight":   true,
+	// Built-in functions
+	"radio":    true,
+	"bono":     true,
+	"canvas":   true,
+	"pixel":    true,
+	"render":   true,
+	"snapshot": true,
+	"framedir": true,
+}
+
+func (c *Checker) isReservedIdentifier(name string) bool {
+	return reservedIdentifiers[name]
 }
 
 // Check type-checks a program.
@@ -67,6 +106,12 @@ func (c *Checker) checkStatement(stmt ast.Statement) {
 }
 
 func (c *Checker) checkVarDecl(decl *ast.VarDecl) {
+	// Check for reserved identifier
+	if c.isReservedIdentifier(decl.Name.Value) {
+		c.addError("'%s' is a reserved identifier", decl.Name.Value)
+		return
+	}
+
 	// Check for redeclaration in same scope
 	if c.env.ExistsInCurrentScope(decl.Name.Value) {
 		c.addError("'%s' already declared in this scope", decl.Name.Value)
@@ -102,6 +147,12 @@ func (c *Checker) checkAssignment(assign *ast.Assignment) {
 }
 
 func (c *Checker) checkFunctionDecl(fn *ast.FunctionDecl) {
+	// Check for reserved identifier
+	if c.isReservedIdentifier(fn.Name.Value) {
+		c.addError("'%s' is a reserved identifier", fn.Name.Value)
+		return
+	}
+
 	// Check for redeclaration
 	if c.env.ExistsInCurrentScope(fn.Name.Value) {
 		c.addError("'%s' already declared in this scope", fn.Name.Value)
@@ -114,12 +165,25 @@ func (c *Checker) checkFunctionDecl(fn *ast.FunctionDecl) {
 		paramTypes[i] = types.Int // Parameters default to int
 	}
 
+	// Create a preliminary function type with Int return for recursion
+	// This allows the function to call itself
+	prelimFnType := &types.FunctionType{
+		Params: paramTypes,
+		Return: types.Int, // Default to int for recursive calls
+	}
+	c.env.Set(fn.Name.Value, prelimFnType)
+
 	// Enter function scope
 	c.env = NewEnclosedEnvironment(c.env)
+
+	// Track parameter names for higher-order function support
+	savedParamNames := c.paramNames
+	c.paramNames = make(map[string]bool)
 
 	// Add parameters to scope
 	for i, param := range fn.Params {
 		c.env.Set(param.Name.Value, paramTypes[i])
+		c.paramNames[param.Name.Value] = true
 	}
 
 	// Check function body and collect return types
@@ -127,8 +191,9 @@ func (c *Checker) checkFunctionDecl(fn *ast.FunctionDecl) {
 
 	// Exit function scope
 	c.env = c.env.outer
+	c.paramNames = savedParamNames
 
-	// Create and store function type
+	// Update function type with actual return type
 	fnType := &types.FunctionType{
 		Params: paramTypes,
 		Return: returnType,
@@ -375,6 +440,13 @@ func (c *Checker) checkInfixExpr(expr *ast.InfixExpr) types.Type {
 }
 
 func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
+	// Check if it's a built-in function call
+	if ident, ok := call.Function.(*ast.Identifier); ok {
+		if retType := c.checkBuiltinCall(ident.Value, call.Arguments); retType != nil {
+			return retType
+		}
+	}
+
 	// Check the function expression
 	fnType := c.checkExpression(call.Function)
 	if fnType == nil {
@@ -383,6 +455,19 @@ func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 
 	fn, ok := fnType.(*types.FunctionType)
 	if !ok {
+		// For higher-order functions: if the callee is an identifier
+		// that's a parameter (int type), allow the call and assume it's a function.
+		// This enables passing functions as arguments.
+		// Only allow this for identifiers that are parameters in the current function.
+		if types.Equal(fnType, types.Int) {
+			if ident, isIdent := call.Function.(*ast.Identifier); isIdent {
+				if c.isParameter(ident.Value) {
+					// Assume it's a function pointer parameter - allow the call
+					// Return type is Int by default for dynamic calls
+					return types.Int
+				}
+			}
+		}
 		c.addError("cannot call non-function type %s", fnType)
 		return nil
 	}
@@ -400,13 +485,119 @@ func (c *Checker) checkCallExpr(call *ast.CallExpr) types.Type {
 		if argType == nil {
 			continue
 		}
+		// Allow function types where int is expected (for higher-order functions)
+		// Parameters default to int, but may accept function pointers
 		if !types.Equal(argType, fn.Params[i]) {
+			if _, isFunc := argType.(*types.FunctionType); isFunc && types.Equal(fn.Params[i], types.Int) {
+				// Allow passing function where int is expected (function pointer)
+				continue
+			}
 			c.addError("argument %d: expected %s, got %s",
 				i+1, fn.Params[i], argType)
 		}
 	}
 
 	return fn.Return
+}
+
+// checkBuiltinCall handles built-in functions specially
+// Returns the return type if it's a built-in, nil otherwise
+func (c *Checker) checkBuiltinCall(name string, args []ast.Expression) types.Type {
+	switch name {
+	case "radio":
+		// radio(int|string|bool) -> void
+		if len(args) != 1 {
+			c.addError("radio expects 1 argument, got %d", len(args))
+			return types.Void
+		}
+		argType := c.checkExpression(args[0])
+		if argType == nil {
+			return types.Void
+		}
+		if !types.Equal(argType, types.Int) && !types.Equal(argType, types.String) && !types.Equal(argType, types.Bool) {
+			c.addError("radio expects int, string, or bool argument, got %s", argType)
+		}
+		return types.Void
+
+	case "bono":
+		// bono(string) -> void
+		if len(args) != 1 {
+			c.addError("bono expects 1 argument, got %d", len(args))
+			return types.Void
+		}
+		argType := c.checkExpression(args[0])
+		if argType != nil && !types.Equal(argType, types.String) {
+			c.addError("bono expects string argument, got %s", argType)
+		}
+		return types.Void
+
+	case "canvas":
+		// canvas(int, int) -> void
+		if len(args) != 2 {
+			c.addError("canvas expects 2 arguments, got %d", len(args))
+			return types.Void
+		}
+		for i, arg := range args {
+			argType := c.checkExpression(arg)
+			if argType != nil && !types.Equal(argType, types.Int) {
+				c.addError("canvas argument %d: expected int, got %s", i+1, argType)
+			}
+		}
+		return types.Void
+
+	case "pixel":
+		// pixel(int, int, int, int, int) -> void
+		if len(args) != 5 {
+			c.addError("pixel expects 5 arguments (x, y, r, g, b), got %d", len(args))
+			return types.Void
+		}
+		for i, arg := range args {
+			argType := c.checkExpression(arg)
+			if argType != nil && !types.Equal(argType, types.Int) {
+				c.addError("pixel argument %d: expected int, got %s", i+1, argType)
+			}
+		}
+		return types.Void
+
+	case "render":
+		// render(string) -> void
+		if len(args) != 1 {
+			c.addError("render expects 1 argument, got %d", len(args))
+			return types.Void
+		}
+		argType := c.checkExpression(args[0])
+		if argType != nil && !types.Equal(argType, types.String) {
+			c.addError("render expects string argument, got %s", argType)
+		}
+		return types.Void
+
+	case "snapshot":
+		// snapshot(int) -> void
+		if len(args) != 1 {
+			c.addError("snapshot expects 1 argument, got %d", len(args))
+			return types.Void
+		}
+		argType := c.checkExpression(args[0])
+		if argType != nil && !types.Equal(argType, types.Int) {
+			c.addError("snapshot expects int argument, got %s", argType)
+		}
+		return types.Void
+
+	case "framedir":
+		// framedir(string) -> void
+		if len(args) != 1 {
+			c.addError("framedir expects 1 argument, got %d", len(args))
+			return types.Void
+		}
+		argType := c.checkExpression(args[0])
+		if argType != nil && !types.Equal(argType, types.String) {
+			c.addError("framedir expects string argument, got %s", argType)
+		}
+		return types.Void
+
+	default:
+		return nil // Not a built-in
+	}
 }
 
 func (c *Checker) checkLambdaExpr(lambda *ast.LambdaExpr) types.Type {
@@ -419,9 +610,14 @@ func (c *Checker) checkLambdaExpr(lambda *ast.LambdaExpr) types.Type {
 	// Enter lambda scope
 	c.env = NewEnclosedEnvironment(c.env)
 
+	// Track parameter names for higher-order function support
+	savedParamNames := c.paramNames
+	c.paramNames = make(map[string]bool)
+
 	// Add parameters to scope
 	for i, param := range lambda.Params {
 		c.env.Set(param.Name.Value, paramTypes[i])
+		c.paramNames[param.Name.Value] = true
 	}
 
 	// Check body and get return type
@@ -429,6 +625,7 @@ func (c *Checker) checkLambdaExpr(lambda *ast.LambdaExpr) types.Type {
 
 	// Exit lambda scope
 	c.env = c.env.outer
+	c.paramNames = savedParamNames
 
 	return &types.FunctionType{
 		Params: paramTypes,

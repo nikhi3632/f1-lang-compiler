@@ -278,6 +278,89 @@ func TestConstantFolding_Comparison(t *testing.T) {
 	}
 }
 
+// --- Constant Propagation Tests ---
+
+func TestConstantPropagation_PropagatesConstants(t *testing.T) {
+	// %0 = copy int 5
+	// %1 = add int %0, 3
+	// After propagation: %1 = add int 5, 3
+	block := &ir.BasicBlock{
+		Label: "entry",
+		Instrs: []ir.Instruction{
+			&ir.Copy{
+				Dest: ir.NewReg(0),
+				Type: types.Int,
+				Val:  &ir.IntConst{Value: 5},
+			},
+			&ir.BinOp{
+				Dest:  ir.NewReg(1),
+				Op:    ir.OpAdd,
+				Type:  types.Int,
+				Left:  ir.NewReg(0),
+				Right: &ir.IntConst{Value: 3},
+			},
+		},
+		Term: &ir.Ret{Type: types.Int, Val: ir.NewReg(1)},
+	}
+
+	fn := &ir.Function{
+		Name:       "test",
+		ReturnType: types.Int,
+		Blocks:     []*ir.BasicBlock{block},
+	}
+
+	mod := &ir.Module{Functions: []*ir.Function{fn}}
+	opt := NewConstantPropagation()
+	opt.Run(mod)
+
+	// The add should now have 5 as left operand
+	binop := fn.Blocks[0].Instrs[1].(*ir.BinOp)
+	if c, ok := binop.Left.(*ir.IntConst); ok {
+		if c.Value != 5 {
+			t.Errorf("expected 5, got %d", c.Value)
+		}
+	} else {
+		t.Errorf("expected IntConst, got %T", binop.Left)
+	}
+}
+
+func TestConstantPropagation_PropagatesInReturn(t *testing.T) {
+	// %0 = copy int 42
+	// ret int %0
+	// After propagation: ret int 42
+	block := &ir.BasicBlock{
+		Label: "entry",
+		Instrs: []ir.Instruction{
+			&ir.Copy{
+				Dest: ir.NewReg(0),
+				Type: types.Int,
+				Val:  &ir.IntConst{Value: 42},
+			},
+		},
+		Term: &ir.Ret{Type: types.Int, Val: ir.NewReg(0)},
+	}
+
+	fn := &ir.Function{
+		Name:       "test",
+		ReturnType: types.Int,
+		Blocks:     []*ir.BasicBlock{block},
+	}
+
+	mod := &ir.Module{Functions: []*ir.Function{fn}}
+	opt := NewConstantPropagation()
+	opt.Run(mod)
+
+	// The return should now have 42 as value
+	ret := fn.Blocks[0].Term.(*ir.Ret)
+	if c, ok := ret.Val.(*ir.IntConst); ok {
+		if c.Value != 42 {
+			t.Errorf("expected 42, got %d", c.Value)
+		}
+	} else {
+		t.Errorf("expected IntConst, got %T", ret.Val)
+	}
+}
+
 // --- Dead Code Elimination Tests ---
 
 func TestDCE_UnusedInstruction(t *testing.T) {
@@ -360,6 +443,85 @@ func TestDCE_KeepsUsedInstructions(t *testing.T) {
 	// Both instructions should remain (chained dependency)
 	if len(fn.Blocks[0].Instrs) != 2 {
 		t.Errorf("expected 2 instructions, got %d", len(fn.Blocks[0].Instrs))
+	}
+}
+
+// --- Tail Call Optimization Tests ---
+
+func TestTCO_MarksTailCall(t *testing.T) {
+	// %0 = call int @fib(...)
+	// ret int %0
+	// Should mark the call as a tail call
+	block := &ir.BasicBlock{
+		Label: "entry",
+		Instrs: []ir.Instruction{
+			&ir.Call{
+				Dest:    ir.NewReg(0),
+				Func:    "fib",
+				Args:    []ir.Value{&ir.IntConst{Value: 5}},
+				RetType: types.Int,
+			},
+		},
+		Term: &ir.Ret{Type: types.Int, Val: ir.NewReg(0)},
+	}
+
+	fn := &ir.Function{
+		Name:       "fib",
+		ReturnType: types.Int,
+		Params:     []*ir.Param{{Name: "n", Type: types.Int}},
+		Blocks:     []*ir.BasicBlock{block},
+	}
+
+	mod := &ir.Module{Functions: []*ir.Function{fn}}
+	opt := NewTailCallOptimization()
+	opt.Run(mod)
+
+	// The call should now be marked as a tail call
+	call := fn.Blocks[0].Instrs[0].(*ir.Call)
+	if !call.IsTail {
+		t.Error("expected call to be marked as tail call")
+	}
+}
+
+func TestTCO_DoesNotMarkNonTailCall(t *testing.T) {
+	// %0 = call int @foo(...)
+	// %1 = add int %0, 1  <-- Something happens after the call
+	// ret int %1
+	// Should NOT mark the call as a tail call
+	block := &ir.BasicBlock{
+		Label: "entry",
+		Instrs: []ir.Instruction{
+			&ir.Call{
+				Dest:    ir.NewReg(0),
+				Func:    "foo",
+				Args:    []ir.Value{&ir.IntConst{Value: 5}},
+				RetType: types.Int,
+			},
+			&ir.BinOp{
+				Dest:  ir.NewReg(1),
+				Op:    ir.OpAdd,
+				Type:  types.Int,
+				Left:  ir.NewReg(0),
+				Right: &ir.IntConst{Value: 1},
+			},
+		},
+		Term: &ir.Ret{Type: types.Int, Val: ir.NewReg(1)},
+	}
+
+	fn := &ir.Function{
+		Name:       "test",
+		ReturnType: types.Int,
+		Blocks:     []*ir.BasicBlock{block},
+	}
+
+	mod := &ir.Module{Functions: []*ir.Function{fn}}
+	opt := NewTailCallOptimization()
+	opt.Run(mod)
+
+	// The call should NOT be marked as a tail call
+	call := fn.Blocks[0].Instrs[0].(*ir.Call)
+	if call.IsTail {
+		t.Error("expected call NOT to be marked as tail call")
 	}
 }
 

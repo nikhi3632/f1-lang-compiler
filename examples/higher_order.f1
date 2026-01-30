@@ -1,0 +1,18 @@
+// Higher-Order Functions
+// Demonstrates passing functions as arguments
+
+// Apply a function to a value
+driver apply = pitstop(driver f, driver x) {
+    finish f(x);
+};
+
+// Double function
+driver double = pitstop(driver n) { finish n * 2; };
+
+// Triple function
+driver triple = pitstop(driver n) { finish n * 3; };
+
+// Apply functions to values
+radio(apply(double, 5));  // 10
+radio(apply(triple, 5));  // 15
+radio(apply(double, 7));  // 14

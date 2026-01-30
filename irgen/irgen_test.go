@@ -217,11 +217,32 @@ func TestIRGen_LogicalNot(t *testing.T) {
 }
 
 func TestIRGen_LogicalAnd(t *testing.T) {
+	// Short-circuit &&: if left is false, right is NOT evaluated
 	input := `driver x = greenlight && redlight;`
 	ir := generateIR(t, input)
 
-	if !strings.Contains(ir, "and bool") {
-		t.Errorf("expected and bool, got:\n%s", ir)
+	// Should use phi for short-circuit evaluation
+	if !strings.Contains(ir, "phi bool") {
+		t.Errorf("expected phi bool for short-circuit &&, got:\n%s", ir)
+	}
+	// Should have conditional branch blocks
+	if !strings.Contains(ir, "and.right") || !strings.Contains(ir, "and.merge") {
+		t.Errorf("expected short-circuit blocks (and.right, and.merge), got:\n%s", ir)
+	}
+}
+
+func TestIRGen_LogicalOr(t *testing.T) {
+	// Short-circuit ||: if left is true, right is NOT evaluated
+	input := `driver x = greenlight || redlight;`
+	ir := generateIR(t, input)
+
+	// Should use phi for short-circuit evaluation
+	if !strings.Contains(ir, "phi bool") {
+		t.Errorf("expected phi bool for short-circuit ||, got:\n%s", ir)
+	}
+	// Should have conditional branch blocks
+	if !strings.Contains(ir, "or.right") || !strings.Contains(ir, "or.merge") {
+		t.Errorf("expected short-circuit blocks (or.right, or.merge), got:\n%s", ir)
 	}
 }
 
@@ -246,5 +267,142 @@ x = 10;
 	count := strings.Count(ir, "store int")
 	if count < 2 {
 		t.Errorf("expected at least 2 stores, got %d in:\n%s", count, ir)
+	}
+}
+
+func TestIRGen_LambdaExpression(t *testing.T) {
+	input := `driver addOne = pitstop(driver x) { finish x + 1; };`
+	ir := generateIR(t, input)
+
+	// Lambda should be lifted to a function
+	if !strings.Contains(ir, "@__lambda_0") {
+		t.Errorf("expected lifted lambda function @__lambda_0, got:\n%s", ir)
+	}
+	// Should have parameter and return
+	if !strings.Contains(ir, "int %x") {
+		t.Errorf("expected parameter 'x', got:\n%s", ir)
+	}
+	if !strings.Contains(ir, "ret int") {
+		t.Errorf("expected ret int, got:\n%s", ir)
+	}
+}
+
+func TestIRGen_LambdaCall(t *testing.T) {
+	input := `
+driver addOne = pitstop(driver x) { finish x + 1; };
+driver result = addOne(5);
+`
+	ir := generateIR(t, input)
+
+	// Should call the lifted lambda function
+	if !strings.Contains(ir, "call int @__lambda_0") {
+		t.Errorf("expected call to lifted lambda, got:\n%s", ir)
+	}
+}
+
+func TestIRGen_StringEquality(t *testing.T) {
+	input := `driver eq = "hello" == "world";`
+	ir := generateIR(t, input)
+
+	// Should call strcmp for string comparison
+	if !strings.Contains(ir, "call int @strcmp") {
+		t.Errorf("expected call to strcmp, got:\n%s", ir)
+	}
+	// Should compare result with 0
+	if !strings.Contains(ir, "eq int") {
+		t.Errorf("expected eq int comparison, got:\n%s", ir)
+	}
+}
+
+func TestIRGen_StringInequality(t *testing.T) {
+	input := `driver neq = "hello" != "world";`
+	ir := generateIR(t, input)
+
+	// Should call strcmp for string comparison
+	if !strings.Contains(ir, "call int @strcmp") {
+		t.Errorf("expected call to strcmp, got:\n%s", ir)
+	}
+	// Should compare result with 0 using neq
+	if !strings.Contains(ir, "neq int") {
+		t.Errorf("expected neq int comparison, got:\n%s", ir)
+	}
+}
+
+// TestIRGen_ClosureCapture tests closure variable capture
+func TestIRGen_ClosureCapture(t *testing.T) {
+	input := `
+driver x = 10;
+driver y = 20;
+driver addXY = pitstop(driver z) {
+    finish x + y + z;
+};
+radio(addXY(5));
+`
+	ir := generateIR(t, input)
+
+	// Should have make_closure instruction with captured values
+	if !strings.Contains(ir, "make_closure @__lambda_0") {
+		t.Errorf("expected make_closure instruction, got:\n%s", ir)
+	}
+
+	// The lambda should have an env parameter
+	if !strings.Contains(ir, "int %__env") {
+		t.Errorf("expected __env parameter in lambda, got:\n%s", ir)
+	}
+
+	// Should have get_env_field instructions to access captured values
+	if !strings.Contains(ir, "get_env_field") {
+		t.Errorf("expected get_env_field instructions, got:\n%s", ir)
+	}
+
+	// The closure call should use closure_call
+	if !strings.Contains(ir, "closure_call") {
+		t.Errorf("expected closure_call instruction, got:\n%s", ir)
+	}
+}
+
+// TestIRGen_ClosureNoCapture tests lambdas without captures (no environment needed)
+func TestIRGen_ClosureNoCapture(t *testing.T) {
+	input := `
+driver double = pitstop(driver x) { finish x * 2; };
+radio(double(5));
+`
+	ir := generateIR(t, input)
+
+	// Should NOT have make_closure (no captures)
+	if strings.Contains(ir, "make_closure") {
+		t.Errorf("expected no make_closure for non-capturing lambda, got:\n%s", ir)
+	}
+
+	// Should NOT have __env parameter
+	if strings.Contains(ir, "%__env") {
+		t.Errorf("expected no __env parameter for non-capturing lambda, got:\n%s", ir)
+	}
+
+	// Should call the lambda directly
+	if !strings.Contains(ir, "call int @__lambda_0") {
+		t.Errorf("expected direct call to lambda, got:\n%s", ir)
+	}
+}
+
+// TestIRGen_HigherOrderFunction tests passing functions as arguments
+func TestIRGen_HigherOrderFunction(t *testing.T) {
+	input := `
+driver apply = pitstop(driver f, driver x) {
+    finish f(x);
+};
+driver double = pitstop(driver n) { finish n * 2; };
+radio(apply(double, 5));
+`
+	ir := generateIR(t, input)
+
+	// The apply function should have a call_indirect for calling f
+	if !strings.Contains(ir, "call_indirect") {
+		t.Errorf("expected call_indirect for function pointer call, got:\n%s", ir)
+	}
+
+	// Double should be passed as a function reference
+	if !strings.Contains(ir, "@__lambda_1") {
+		t.Errorf("expected double to be lifted as __lambda_1, got:\n%s", ir)
 	}
 }

@@ -1,0 +1,71 @@
+// Mandelbrot Set - Classic fractal using integer fixed-point math
+// Output: examples/graphics/outputs/mandelbrot.ppm (400x300)
+// Uses fixed-point arithmetic (scale factor 1000)
+//
+// To convert to PNG (run from project root):
+//   ffmpeg -y -i examples/graphics/outputs/mandelbrot.ppm -vf "scale=800:600:flags=neighbor" examples/graphics/outputs/mandelbrot.png
+
+canvas(400, 300);
+
+driver maxIter = 30;
+
+// Pre-declare variables outside loops to avoid stack overflow
+driver x0 = 0;
+driver y0 = 0;
+driver zx = 0;
+driver zy = 0;
+driver x2 = 0;
+driver y2 = 0;
+driver iter = 0;
+driver escaped = redlight;
+driver xtemp = 0;
+driver c = 0;
+
+lap (driver py = 0; py < 300; py = py + 1) {
+    lap (driver px = 0; px < 400; px = px + 1) {
+        // Map pixel to complex plane: x in [-2.5, 1], y in [-1.25, 1.25]
+        // Using fixed point with scale 1000
+        x0 = (px * 3500 / 400) - 2500;
+        y0 = (py * 2500 / 300) - 1250;
+
+        zx = 0;
+        zy = 0;
+        iter = 0;
+        escaped = redlight;
+
+        // Iterate z = z^2 + c
+        lap (driver i = 0; i < maxIter; i = i + 1) {
+            drs (!escaped) {
+                // x^2 and y^2 (divide by 1000 to maintain scale)
+                x2 = zx * zx / 1000;
+                y2 = zy * zy / 1000;
+
+                // Check escape condition: |z|^2 > 4 (4000 in fixed-point)
+                drs (x2 + y2 > 4000) {
+                    escaped = greenlight;
+                    iter = i;
+                } defend {
+                    // z = z^2 + c
+                    // new_x = x^2 - y^2 + x0
+                    // new_y = 2*x*y + y0
+                    xtemp = x2 - y2 + x0;
+                    zy = 2 * zx * zy / 1000 + y0;
+                    zx = xtemp;
+                }
+            }
+        }
+
+        // Color based on iteration count
+        drs (!escaped) {
+            // Inside the set - black
+            pixel(px, py, 0, 0, 0);
+        } defend {
+            // Outside - color gradient based on escape time
+            c = iter * 255 / maxIter;
+            pixel(px, py, c, c * 2 % 256, 255 - c);
+        }
+    }
+}
+
+render("examples/graphics/outputs/mandelbrot.ppm");
+radio("Rendered: examples/graphics/outputs/mandelbrot.ppm");

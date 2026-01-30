@@ -1,0 +1,76 @@
+// Race Track - Top-down view of an F1 circuit with a car
+// Output: examples/graphics/outputs/track.ppm (400x300)
+//
+// To convert to PNG (run from project root):
+//   ffmpeg -y -i examples/graphics/outputs/track.ppm -vf "scale=800:600:flags=neighbor" examples/graphics/outputs/track.png
+
+canvas(400, 300);
+
+// Track parameters (ellipse)
+driver trackCx = 200;
+driver trackCy = 150;
+driver outerA = 150;  // outer semi-major axis (x)
+driver outerB = 100;  // outer semi-minor axis (y)
+driver innerA = 100;  // inner semi-major axis
+driver innerB = 50;   // inner semi-minor axis
+
+// Car position (on the track)
+driver carX = 340;
+driver carY = 150;
+driver carW = 12;
+driver carH = 6;
+
+// Pre-declare working variables outside loop
+driver dx = 0;
+driver dy = 0;
+driver outerCheck = 0;
+driver innerCheck = 0;
+driver shade = 0;
+
+lap (driver py = 0; py < 300; py = py + 1) {
+    lap (driver px = 0; px < 400; px = px + 1) {
+        // Calculate ellipse equation: (dx/a)^2 + (dy/b)^2
+        // Multiply by 10000 to avoid floating point
+        dx = px - trackCx;
+        dy = py - trackCy;
+
+        // Outer ellipse check (scaled)
+        outerCheck = (dx * dx * 10000 / (outerA * outerA)) +
+                     (dy * dy * 10000 / (outerB * outerB));
+
+        // Inner ellipse check (scaled)
+        innerCheck = (dx * dx * 10000 / (innerA * innerA)) +
+                     (dy * dy * 10000 / (innerB * innerB));
+
+        // Check car first
+        drs (px >= carX - carW / 2 && px <= carX + carW / 2 &&
+             py >= carY - carH / 2 && py <= carY + carH / 2) {
+            // Red car
+            pixel(px, py, 255, 0, 0);
+        } defend drs (px >= 340 && px <= 350 && py >= 140 && py <= 160 &&
+                     outerCheck <= 10000 && innerCheck >= 10000) {
+            // White start/finish line
+            pixel(px, py, 255, 255, 255);
+        } defend drs ((outerCheck > 9000 && outerCheck <= 10000 ||
+                      innerCheck >= 10000 && innerCheck < 11500) &&
+                     ((px + py) / 8) % 2 == 0) {
+            // Red and white curbs
+            pixel(px, py, 255, 50, 50);
+        } defend drs (outerCheck <= 10000 && innerCheck >= 10000) {
+            // Gray tarmac with slight texture
+            shade = 70 + ((px * py) % 20);
+            pixel(px, py, shade, shade, shade);
+        } defend drs (innerCheck < 10000) {
+            // Green grass infield
+            shade = 80 + ((px + py) % 40);
+            pixel(px, py, 30, shade, 30);
+        } defend {
+            // Darker green outside
+            shade = 50 + ((px * py) % 30);
+            pixel(px, py, 20, shade, 20);
+        }
+    }
+}
+
+render("examples/graphics/outputs/track.ppm");
+radio("Rendered: examples/graphics/outputs/track.ppm");

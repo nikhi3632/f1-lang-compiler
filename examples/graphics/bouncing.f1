@@ -1,0 +1,77 @@
+// Bouncing Ball Animation - A red ball bouncing around the canvas
+// Output: examples/graphics/outputs/frame_0000.ppm through frame_0099.ppm (200x200)
+//
+// To convert to GIF (run from project root):
+//   cd examples/graphics/outputs && ffmpeg -y -framerate 30 -i frame_%04d.ppm -vf "scale=400:400:flags=neighbor" bouncing.gif && rm frame_*.ppm
+
+framedir("examples/graphics/outputs");
+canvas(200, 200);
+
+// Ball properties
+driver bx = 50;
+driver by = 50;
+driver vx = 4;
+driver vy = 3;
+driver radius = 15;
+driver r2 = radius * radius;
+
+// Pre-declare working variables
+driver dx = 0;
+driver dy = 0;
+driver dist2 = 0;
+driver bg = 0;
+
+// Generate 100 frames
+lap (driver frame = 0; frame < 100; frame = frame + 1) {
+    // Draw each pixel
+    lap (driver py = 0; py < 200; py = py + 1) {
+        lap (driver px = 0; px < 200; px = px + 1) {
+            // Distance from ball center (squared)
+            dx = px - bx;
+            dy = py - by;
+            dist2 = dx * dx + dy * dy;
+
+            drs (dist2 < r2) {
+                // Inside ball - red with highlight
+                drs (dist2 < r2 / 4) {
+                    // Highlight (brighter)
+                    pixel(px, py, 255, 100, 100);
+                } defend {
+                    // Ball body
+                    pixel(px, py, 220, 30, 30);
+                }
+            } defend {
+                // Background - dark blue gradient
+                bg = 20 + py / 10;
+                pixel(px, py, 0, 0, bg);
+            }
+        }
+    }
+
+    snapshot(frame);
+
+    // Update ball position
+    bx = bx + vx;
+    by = by + vy;
+
+    // Bounce off walls
+    drs (bx <= radius) {
+        bx = radius;
+        vx = 0 - vx;
+    }
+    drs (bx >= 200 - radius) {
+        bx = 200 - radius;
+        vx = 0 - vx;
+    }
+    drs (by <= radius) {
+        by = radius;
+        vy = 0 - vy;
+    }
+    drs (by >= 200 - radius) {
+        by = 200 - radius;
+        vy = 0 - vy;
+    }
+}
+
+radio("Animation complete! 100 frames generated.");
+radio("To convert: cd examples/graphics/outputs && ffmpeg -y -framerate 30 -i frame_%04d.ppm -vf scale=400:400:flags=neighbor bouncing.gif");

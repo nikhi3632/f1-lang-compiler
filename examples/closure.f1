@@ -1,0 +1,13 @@
+// Closure Capturing
+// Note: Full closure capture requires environment passing - simplified version
+
+driver add5 = pitstop(driver x) {
+    finish x + 5;
+};
+
+driver add10 = pitstop(driver x) {
+    finish x + 10;
+};
+
+radio(add5(3));   // 8
+radio(add10(3));  // 13

@@ -1,0 +1,9 @@
+// Tail-Recursive Fibonacci
+pitstop fib(driver n, driver a, driver b) {
+    drs (n == 0) {
+        finish a;
+    }
+    finish fib(n - 1, b, a + b);  // tail call - no stack growth
+}
+
+radio(fib(50, 0, 1));  // 12586269025 (instant, no overflow)

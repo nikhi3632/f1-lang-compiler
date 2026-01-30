@@ -1,0 +1,12 @@
+// FizzBuzz
+lap (driver i = 1; i <= 100; i = i + 1) {
+    drs (i % 15 == 0) {
+        radio("FizzBuzz");
+    } defend drs (i % 3 == 0) {
+        radio("Fizz");
+    } defend drs (i % 5 == 0) {
+        radio("Buzz");
+    } defend {
+        radio(i);
+    }
+}

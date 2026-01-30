@@ -1,0 +1,12 @@
+// Function Composition
+// Note: Full composition requires closure capture - demonstrating the concept
+
+driver double = pitstop(driver x) { finish x * 2; };
+driver addOne = pitstop(driver x) { finish x + 1; };
+
+// Manual composition: doubleThenAdd(x) = addOne(double(x))
+driver x = 5;
+driver doubled = double(x);      // 10
+driver result = addOne(doubled); // 11
+
+radio(result);  // 11 (5*2 + 1)

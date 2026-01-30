@@ -56,11 +56,23 @@ func (g *Generator) emitHeader() {
 }
 
 func (g *Generator) emitExternals() {
-	// Declare external functions that might be used
+	// Declare external functions
 	g.sb.WriteString("; External declarations\n")
-	g.sb.WriteString("declare i64 @print(i64)\n")
-	g.sb.WriteString("declare i64 @println(i64)\n")
-	g.sb.WriteString("declare i64 @printstr(ptr)\n")
+	// I/O functions
+	g.sb.WriteString("declare void @f1_radio_int(i64)\n")
+	g.sb.WriteString("declare void @f1_radio_str(ptr)\n")
+	g.sb.WriteString("declare void @f1_radio_bool(i1)\n")
+	g.sb.WriteString("declare void @f1_bono(ptr)\n")
+	// Graphics functions
+	g.sb.WriteString("declare void @f1_canvas(i64, i64)\n")
+	g.sb.WriteString("declare void @f1_pixel(i64, i64, i64, i64, i64)\n")
+	g.sb.WriteString("declare void @f1_render(ptr)\n")
+	g.sb.WriteString("declare void @f1_snapshot(i64)\n")
+	g.sb.WriteString("declare void @f1_framedir(ptr)\n")
+	// String comparison
+	g.sb.WriteString("declare i32 @strcmp(ptr, ptr)\n")
+	// Memory allocation for closures
+	g.sb.WriteString("declare ptr @malloc(i64)\n")
 	g.sb.WriteString("\n")
 }
 
@@ -78,7 +90,12 @@ func (g *Generator) emitFunction(fn *ir.Function) {
 	retType := g.llvmType(fn.ReturnType)
 	params := make([]string, len(fn.Params))
 	for i, p := range fn.Params {
-		params[i] = fmt.Sprintf("%s %%%s", g.llvmType(p.Type), p.Name)
+		// For closures, the first parameter is the environment pointer
+		if fn.IsClosure && i == 0 && p.Name == "__env" {
+			params[i] = "ptr %__env"
+		} else {
+			params[i] = fmt.Sprintf("%s %%%s", g.llvmType(p.Type), p.Name)
+		}
 	}
 
 	g.sb.WriteString(fmt.Sprintf("define %s @%s(%s) {\n",
@@ -127,6 +144,14 @@ func (g *Generator) emitInstruction(instr ir.Instruction) {
 		g.emitCopy(i)
 	case *ir.Phi:
 		g.emitPhi(i)
+	case *ir.MakeClosure:
+		g.emitMakeClosure(i)
+	case *ir.GetEnvField:
+		g.emitGetEnvField(i)
+	case *ir.CallIndirect:
+		g.emitCallIndirect(i)
+	case *ir.ClosureCall:
+		g.emitClosureCall(i)
 	default:
 		g.sb.WriteString(fmt.Sprintf("; unknown instruction: %T", instr))
 	}
@@ -205,6 +230,43 @@ func (g *Generator) emitUnaryOp(u *ir.UnaryOp) {
 func (g *Generator) emitCall(c *ir.Call) {
 	retType := g.llvmType(c.RetType)
 
+	// Build argument list with types, converting FuncRefs to i64
+	args := make([]string, len(c.Args))
+	for i, arg := range c.Args {
+		if funcRef, ok := arg.(*ir.FuncRef); ok {
+			// Function references need to be converted to i64 for passing
+			// Use ptrtoint to convert function pointer to integer
+			args[i] = fmt.Sprintf("i64 ptrtoint (ptr @%s to i64)", funcRef.Name)
+		} else {
+			// Use provided ArgTypes if available, otherwise infer
+			var argType string
+			if i < len(c.ArgTypes) && c.ArgTypes[i] != nil {
+				argType = g.llvmType(c.ArgTypes[i])
+			} else {
+				argType = g.inferValueType(arg)
+			}
+			args[i] = fmt.Sprintf("%s %s", argType, g.llvmValue(arg))
+		}
+	}
+
+	// Use musttail for tail calls (TCO)
+	callPrefix := "call"
+	if c.IsTail {
+		callPrefix = "musttail call"
+	}
+
+	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
+		g.sb.WriteString(fmt.Sprintf("%s void @%s(%s)", callPrefix, c.Func, strings.Join(args, ", ")))
+	} else {
+		g.sb.WriteString(fmt.Sprintf("%s = %s %s @%s(%s)",
+			g.llvmValue(c.Dest), callPrefix, retType, c.Func, strings.Join(args, ", ")))
+	}
+}
+
+// emitCallIndirect generates LLVM IR for indirect function calls (higher-order functions).
+func (g *Generator) emitCallIndirect(c *ir.CallIndirect) {
+	retType := g.llvmType(c.RetType)
+
 	// Build argument list with types
 	args := make([]string, len(c.Args))
 	for i, arg := range c.Args {
@@ -212,11 +274,70 @@ func (g *Generator) emitCall(c *ir.Call) {
 		args[i] = fmt.Sprintf("%s %s", argType, g.llvmValue(arg))
 	}
 
+	// Build function type for indirect call
+	argTypes := make([]string, len(c.Args))
+	for i := range c.Args {
+		argTypes[i] = "i64"
+	}
+	funcType := fmt.Sprintf("%s (%s)", retType, strings.Join(argTypes, ", "))
+
+	// Convert function pointer (i64) to ptr
+	funcPtr := g.llvmValue(c.FuncPtr)
+	ptrReg := fmt.Sprintf("%%__fptr_%d", c.Dest.ID)
+	g.sb.WriteString(fmt.Sprintf("%s = inttoptr i64 %s to ptr\n    ", ptrReg, funcPtr))
+
 	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
-		g.sb.WriteString(fmt.Sprintf("call void @%s(%s)", c.Func, strings.Join(args, ", ")))
+		g.sb.WriteString(fmt.Sprintf("call void %s(%s)", ptrReg, strings.Join(args, ", ")))
 	} else {
-		g.sb.WriteString(fmt.Sprintf("%s = call %s @%s(%s)",
-			g.llvmValue(c.Dest), retType, c.Func, strings.Join(args, ", ")))
+		g.sb.WriteString(fmt.Sprintf("%s = call %s %s(%s)",
+			g.llvmValue(c.Dest), funcType, ptrReg, strings.Join(args, ", ")))
+	}
+}
+
+// emitClosureCall generates LLVM IR for calling through a closure struct.
+// Closure struct layout: { ptr func_ptr, ptr env_ptr }
+func (g *Generator) emitClosureCall(c *ir.ClosureCall) {
+	retType := g.llvmType(c.RetType)
+	closurePtr := g.llvmValue(c.ClosurePtr)
+	destID := 0
+	if c.Dest != nil {
+		destID = c.Dest.ID
+	}
+
+	// Extract function pointer from closure[0]
+	funcSlot := fmt.Sprintf("%%__cc_func_slot_%d", destID)
+	funcPtr := fmt.Sprintf("%%__cc_func_%d", destID)
+	g.sb.WriteString(fmt.Sprintf("%s = getelementptr ptr, ptr %s, i64 0\n    ", funcSlot, closurePtr))
+	g.sb.WriteString(fmt.Sprintf("%s = load ptr, ptr %s\n    ", funcPtr, funcSlot))
+
+	// Extract env pointer from closure[1]
+	envSlot := fmt.Sprintf("%%__cc_env_slot_%d", destID)
+	envPtr := fmt.Sprintf("%%__cc_env_%d", destID)
+	g.sb.WriteString(fmt.Sprintf("%s = getelementptr ptr, ptr %s, i64 1\n    ", envSlot, closurePtr))
+	g.sb.WriteString(fmt.Sprintf("%s = load ptr, ptr %s\n    ", envPtr, envSlot))
+
+	// Build argument list with env as first argument
+	args := make([]string, len(c.Args)+1)
+	args[0] = fmt.Sprintf("ptr %s", envPtr)
+	for i, arg := range c.Args {
+		argType := g.inferValueType(arg)
+		args[i+1] = fmt.Sprintf("%s %s", argType, g.llvmValue(arg))
+	}
+
+	// Build function type for indirect call
+	// Function signature: retType (ptr env, arg types...)
+	argTypes := make([]string, len(c.Args)+1)
+	argTypes[0] = "ptr"
+	for i := range c.Args {
+		argTypes[i+1] = "i64"
+	}
+	funcType := fmt.Sprintf("%s (%s)", retType, strings.Join(argTypes, ", "))
+
+	if c.Dest == nil || types.Equal(c.RetType, types.Void) {
+		g.sb.WriteString(fmt.Sprintf("call void %s(%s)", funcPtr, strings.Join(args, ", ")))
+	} else {
+		g.sb.WriteString(fmt.Sprintf("%s = call %s %s(%s)",
+			g.llvmValue(c.Dest), funcType, funcPtr, strings.Join(args, ", ")))
 	}
 }
 
@@ -263,6 +384,60 @@ func (g *Generator) emitTerminator(term ir.Terminator) {
 	}
 }
 
+// emitMakeClosure generates LLVM IR for closure creation.
+// Creates a closure struct: { ptr func_ptr, ptr env_ptr }
+func (g *Generator) emitMakeClosure(m *ir.MakeClosure) {
+	numCaptures := len(m.Captures)
+
+	// Allocate closure struct: { func_ptr, env_ptr } = 16 bytes
+	g.sb.WriteString(fmt.Sprintf("%s = call ptr @malloc(i64 16)\n",
+		g.llvmValue(m.Dest)))
+
+	// Store function pointer at offset 0
+	g.sb.WriteString(fmt.Sprintf("    %%__closure_func_%d = getelementptr ptr, ptr %s, i64 0\n",
+		m.Dest.ID, g.llvmValue(m.Dest)))
+	g.sb.WriteString(fmt.Sprintf("    store ptr @%s, ptr %%__closure_func_%d\n",
+		m.FuncName, m.Dest.ID))
+
+	if numCaptures == 0 {
+		// No captures - store null for env
+		g.sb.WriteString(fmt.Sprintf("    %%__closure_env_slot_%d = getelementptr ptr, ptr %s, i64 1\n",
+			m.Dest.ID, g.llvmValue(m.Dest)))
+		g.sb.WriteString(fmt.Sprintf("    store ptr null, ptr %%__closure_env_slot_%d",
+			m.Dest.ID))
+		return
+	}
+
+	// Allocate environment struct on heap
+	// Size = numCaptures * 8 bytes (i64)
+	envSize := numCaptures * 8
+	g.sb.WriteString(fmt.Sprintf("    %%__env_%d = call ptr @malloc(i64 %d)\n",
+		m.Dest.ID, envSize))
+
+	// Store captured values into environment
+	for i, cap := range m.Captures {
+		g.sb.WriteString(fmt.Sprintf("    %%__env_ptr_%d_%d = getelementptr i64, ptr %%__env_%d, i64 %d\n",
+			m.Dest.ID, i, m.Dest.ID, i))
+		g.sb.WriteString(fmt.Sprintf("    store i64 %s, ptr %%__env_ptr_%d_%d\n",
+			g.llvmValue(cap), m.Dest.ID, i))
+	}
+
+	// Store env pointer at offset 1 in closure struct
+	g.sb.WriteString(fmt.Sprintf("    %%__closure_env_slot_%d = getelementptr ptr, ptr %s, i64 1\n",
+		m.Dest.ID, g.llvmValue(m.Dest)))
+	g.sb.WriteString(fmt.Sprintf("    store ptr %%__env_%d, ptr %%__closure_env_slot_%d",
+		m.Dest.ID, m.Dest.ID))
+}
+
+// emitGetEnvField generates LLVM IR to load a value from the closure environment.
+func (g *Generator) emitGetEnvField(gef *ir.GetEnvField) {
+	// Get pointer to field in environment
+	g.sb.WriteString(fmt.Sprintf("%%__env_field_%d = getelementptr i64, ptr %s, i64 %d\n",
+		gef.Dest.ID, g.llvmValue(gef.Env), gef.Index))
+	g.sb.WriteString(fmt.Sprintf("    %s = load i64, ptr %%__env_field_%d",
+		g.llvmValue(gef.Dest), gef.Dest.ID))
+}
+
 // llvmType converts F1-Lang types to LLVM types.
 func (g *Generator) llvmType(t types.Type) string {
 	switch tp := t.(type) {
@@ -299,6 +474,8 @@ func (g *Generator) llvmValue(v ir.Value) string {
 		return fmt.Sprintf("@%s", val.Name)
 	case *ir.ParamRef:
 		return fmt.Sprintf("%%%s", val.Name)
+	case *ir.FuncRef:
+		return fmt.Sprintf("@%s", val.Name)
 	default:
 		return "0"
 	}
@@ -310,6 +487,8 @@ func (g *Generator) inferValueType(v ir.Value) string {
 	case *ir.BoolConst:
 		return "i1"
 	case *ir.StringConst:
+		return "ptr"
+	case *ir.FuncRef:
 		return "ptr"
 	default:
 		return "i64"

@@ -9,7 +9,7 @@ import (
 	"f1c/token"
 )
 
-// Precedence levels (from SPEC.md §3.4)
+// Precedence levels
 const (
 	_ int = iota
 	LOWEST

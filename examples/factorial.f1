@@ -1,0 +1,9 @@
+// Factorial
+pitstop factorial(driver n) {
+    drs (n <= 1) {
+        finish 1;
+    }
+    finish n * factorial(n - 1);
+}
+
+radio(factorial(10));  // 3628800

@@ -1,0 +1,9 @@
+// Fibonacci
+pitstop fib(driver n) {
+    drs (n < 2) {
+        finish n;
+    }
+    finish fib(n - 1) + fib(n - 2);
+}
+
+radio(fib(20));  // 6765

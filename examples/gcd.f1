@@ -1,0 +1,9 @@
+// GCD (Euclidean Algorithm)
+pitstop gcd(driver a, driver b) {
+    drs (b == 0) {
+        finish a;
+    }
+    finish gcd(b, a % b);
+}
+
+radio(gcd(48, 18));  // 6
