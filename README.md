@@ -237,6 +237,8 @@ make test
 ```
 f1-lang-compiler/
 ├── cmd/f1c/        # CLI entry point
+├── token/          # Token type definitions
+├── errors/         # Error reporting with source context
 ├── lexer/          # Tokenizer
 ├── ast/            # AST node definitions
 ├── parser/         # Pratt parser
@@ -246,8 +248,8 @@ f1-lang-compiler/
 ├── irgen/          # AST → F1-IR
 ├── optimizer/      # Optimization passes
 ├── codegen/        # F1-IR → LLVM IR
-├── runtime/        # C runtime (graphics support)
 ├── compiler/       # Pipeline orchestration
+├── runtime/        # C runtime (graphics support)
 ├── examples/       # Example programs
 └── spec/           # Language specification
 ```
